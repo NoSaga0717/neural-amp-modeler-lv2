@@ -1,0 +1,127 @@
+# Tête NAM : premier test sur Raspberry Pi 3
+
+Montage : guitare → MOTU M4 (entrée 1, instrument) → Pi 3 (USB) → M4 sortie 1 → FX RETURN de la Spider Valve → 4x12.
+
+Logiciel : Raspberry Pi OS Lite 64 bits, JACK (serveur audio temps réel), mod-host (hôte de plugins piloté par le réseau, le même que les pédaliers MOD), et le plugin `neural-amp-modeler-lv2` de ce dépôt. Tout démarre tout seul à l'allumage.
+
+## 1. Préparer la carte SD (sur votre ordinateur)
+
+1. Installez **Raspberry Pi Imager** : https://www.raspberrypi.com/software/
+2. **Appareil** : Raspberry Pi 3.
+3. **Système** : *Raspberry Pi OS (other)* → **Raspberry Pi OS Lite (64-bit)**. Lite = sans bureau, c'est voulu.
+4. **Stockage** : votre carte SD (16 Go ou plus, classe A1 de préférence).
+5. Quand Imager propose la **personnalisation**, remplissez :
+   - nom d'hôte : `tetenam`
+   - utilisateur et mot de passe (par exemple `alex`)
+   - Wi-Fi : nom du réseau, mot de passe, pays **FR**
+   - fuseau horaire Europe/Paris, clavier `fr`
+   - **SSH activé**, avec authentification par mot de passe
+6. Écrivez la carte, mettez-la dans le Pi, branchez l'alim. Le premier démarrage prend 2 à 3 minutes.
+
+> Sur le Pi 3, la prise Ethernet partage le même bus USB que la M4. Préférez le Wi-Fi pour vous connecter pendant les tests.
+
+## 2. Se connecter au Pi
+
+Depuis un terminal (Windows : PowerShell, Mac/Linux : Terminal) :
+
+```bash
+ssh alex@tetenam.local
+```
+
+(Remplacez `alex` par votre utilisateur. Si `tetenam.local` ne répond pas, cherchez l'adresse IP du Pi sur votre box.)
+
+## 3. Installer (copier-coller, une ligne à la fois)
+
+Branchez la M4 sur un port USB du Pi avant de commencer.
+
+```bash
+sudo apt update && sudo apt install -y git
+git clone -b claude/project-thread-wu9p0j https://github.com/nosaga0717/neural-amp-modeler-lv2.git
+cd neural-amp-modeler-lv2
+sudo ./tete-nam/install.sh
+```
+
+Le script installe JACK, compile le plugin NAM et mod-host, règle le temps réel et le démarrage automatique. **La compilation prend 30 à 90 minutes sur un Pi 3.** Si la connexion SSH coupe pendant ce temps, reconnectez-vous et tapez `cd neural-amp-modeler-lv2 && sudo ./tete-nam/install.sh` : le script reprend là où il en était.
+
+## 4. Copier le modèle
+
+Depuis votre ordinateur (pas depuis le Pi), dans le dossier où se trouve votre fichier `.nam` :
+
+```bash
+scp mon_modele_lite.nam alex@tetenam.local:~/nam/modele1.nam
+```
+
+Pour garder le nom d'origine, copiez-le tel quel et indiquez son chemin dans les réglages (voir plus bas). Évitez les espaces dans les noms de fichiers.
+
+Puis, sur le Pi :
+
+```bash
+sudo reboot
+```
+
+## 5. Premier son
+
+**Avant d'allumer** : le 4x12 est branché sur la sortie HP de la Spider Valve (jamais de tête à lampes sans charge), le bouton MONITOR de la M4 est au minimum et le master de la Spider Valve est bas.
+
+1. Guitare dans l'entrée combo 1 de la M4, en jack 6,35 (entrée haute impédance, passive ou active). Réglez le gain 1 pour que le vu-mètre de l'écran ne touche jamais le rouge en jouant fort.
+2. Sortie **MONITOR OUT L** de la M4 (sortie 1, à l'arrière) → **FX RETURN** de la Spider Valve.
+3. Allumez le Pi, attendez environ 40 secondes, puis montez doucement le MONITOR de la M4, puis le master de l'ampli.
+
+## 6. Vérifier que tout va bien
+
+```bash
+tete-nam etat
+```
+
+Affiche : service actif, charge DSP, nombre de xruns (craquements), température, throttling et réglages. Pour suivre en direct pendant que vous jouez :
+
+```bash
+watch -n 1 tete-nam etat
+```
+
+(Ctrl+C pour sortir.) Le journal complet : `journalctl -u tete-nam -f`.
+
+## 7. Procédure de test
+
+Changez les réglages avec `sudo nano /etc/tete-nam.conf` (Ctrl+O pour enregistrer, Ctrl+X pour sortir), puis `sudo systemctl restart tete-nam`.
+
+| Étape | Réglage | Ce qu'on regarde |
+|---|---|---|
+| A | 1 modèle lite, `PERIOD=256` | Ça sonne, charge DSP, 0 xrun sur 5 minutes de jeu |
+| B | 1 modèle lite, `PERIOD=128` | Idem. La latence doit devenir imperceptible |
+| C | `NPERIODS=2` (garder 128) | Encore moins de latence, si toujours 0 xrun |
+| D | 2 modèles : remplir `MODEL2=` | Test de charge (les deux modèles sont en série) |
+| E | Si ça craque : modèles feather | Valider la chaîne, la qualité se jugera sur le Pi 5 |
+
+Notez à chaque étape la charge DSP et les xruns. Repères :
+
+- **Charge DSP** sous 70 % : confortable. Au-delà de 85 %, ça finira par craquer.
+- **Xruns** : 0 en jouant 5 minutes. Le compteur repart à zéro à chaque redémarrage du service.
+- **Température** sous 80 °C. Au-delà, le Pi ralentit : mettez un dissipateur, voire un petit ventilateur.
+- **Throttling** `0x0`. Autre chose = alimentation trop faible (prenez l'alim officielle 2,5 A, la M4 tire sur l'USB du Pi) ou surchauffe.
+
+Pour essayer un autre modèle sans redémarrer :
+
+```bash
+tete-nam modele 1 ~/nam/autre_modele.nam
+```
+
+## Réglages (`/etc/tete-nam.conf`)
+
+| Réglage | Rôle |
+|---|---|
+| `CARD` | Nom de la carte son (`cat /proc/asound/cards` pour le vérifier) |
+| `RATE` | 48000, comme les modèles |
+| `PERIOD`, `NPERIODS` | Taille et nombre de buffers JACK |
+| `INPUT`, `OUTPUTS` | Entrée guitare et sorties de la M4 |
+| `MODEL1`, `MODEL2` | Chemins des modèles `.nam` |
+| `IN_DB`, `OUT_DB` | Niveau avant et après le modèle, en dB |
+| `QUALITY` | Seulement pour les modèles NAM A2 (< 0.5 = lite) |
+
+## Si ça ne marche pas
+
+- `tete-nam etat` dit *inactive* ou *activating* : regardez `journalctl -u tete-nam -n 50`. Les messages commencent par ERREUR et disent quoi faire (carte introuvable, modèle introuvable…).
+- **Carte introuvable** : `cat /proc/asound/cards`, puis mettez dans `CARD=` le nom entre crochets de la M4.
+- **Pas de son mais tout est actif** : vérifiez le bouton MONITOR de la M4, le câble vers FX RETURN et `jack_lsp -c` (les connexions doivent aller de `system:capture_1` à `effect_0`, puis vers `system:playback_1`).
+- **Annuler les réglages de démarrage** : une copie de `cmdline.txt` d'origine est dans `/boot/firmware/cmdline.txt.avant-tete-nam`.
+- **Couper le démarrage automatique** : `sudo systemctl disable --now tete-nam`.
