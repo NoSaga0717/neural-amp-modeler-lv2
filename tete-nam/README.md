@@ -101,6 +101,35 @@ Elle permet d'envoyer vos fichiers `.nam` sur la tête (bouton en bas de page). 
 
 Ces changements sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de `/etc/tete-nam.conf`. La page tourne en priorité basse pour ne jamais gêner l'audio. Si elle ne répond pas : `journalctl -u tete-nam-web -n 30`.
 
+### Sans Wi-Fi (studio) : le réseau de la tête
+
+Au démarrage, la tête attend jusqu'à 45 secondes un Wi-Fi qu'elle connaît (celui entré dans Raspberry Pi Imager). Si elle n'en trouve aucun, elle crée **son propre réseau Wi-Fi** :
+
+1. Sur le téléphone, connectez-vous au Wi-Fi **TeteNAM** (mot de passe `tetenam2026` par défaut, à changer).
+2. Ouvrez **http://tetenam.local:8080**, même port que d'habitude. Si le nom ne répond pas (certains Android anciens), ouvrez **http://10.42.0.1:8080**.
+3. En SSH : `ssh alex@10.42.0.1`.
+
+Le téléphone dira peut-être « pas d'accès Internet » : c'est normal, restez connecté quand même (sur Android, répondez « garder la connexion »).
+
+Changer le nom, le mot de passe ou le comportement : `sudo nano /etc/tete-nam-wifi.conf`.
+
+| Réglage | Rôle |
+|---|---|
+| `MODE` | `auto` (Wi-Fi connu sinon hotspot), `hotspot` (toujours le réseau de la tête), `maison` (jamais de hotspot) |
+| `ATTENTE` | Secondes laissées au Wi-Fi connu au démarrage |
+| `SSID`, `MOT_DE_PASSE` | Nom et mot de passe du réseau de la tête (8 caractères minimum) |
+| `CANAL` | 1, 6 ou 11. Changer si un autre réseau gêne |
+
+Commandes :
+
+```bash
+tete-nam-wifi etat      # ce qui est actif et l'adresse de la page
+tete-nam-wifi hotspot   # passer tout de suite sur le réseau de la tête
+tete-nam-wifi maison    # revenir au Wi-Fi connu (s'il est introuvable, le hotspot revient tout seul)
+```
+
+Une bascule coupe le Wi-Fi quelques secondes : reconnectez le téléphone au bon réseau. Le hotspot ne touche pas à l'audio et coûte très peu de processeur (c'est la puce Wi-Fi qui fait le travail).
+
 ## 7. Procédure de test
 
 Changez les réglages avec `sudo nano /etc/tete-nam.conf` (Ctrl+O pour enregistrer, Ctrl+X pour sortir), puis `sudo systemctl restart tete-nam`.
@@ -145,3 +174,4 @@ tete-nam modele 1 ~/nam/autre_modele.nam
 - **Pas de son mais tout est actif** : vérifiez le bouton MONITOR de la M4, le câble vers FX RETURN et `jack_lsp -c` (les connexions doivent aller de `system:capture_1` à `effect_0`, puis vers `system:playback_1`).
 - **Annuler les réglages de démarrage** : une copie de `cmdline.txt` d'origine est dans `/boot/firmware/cmdline.txt.avant-tete-nam`.
 - **Couper le démarrage automatique** : `sudo systemctl disable --now tete-nam`.
+- **Le réseau TeteNAM n'apparaît pas** : `journalctl -u tete-nam-wifi -n 30`. Vérifiez que le pays Wi-Fi est réglé (`sudo raspi-config`, *Localisation Options*, *WLAN Country*, FR).
