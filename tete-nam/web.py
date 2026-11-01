@@ -2,11 +2,12 @@
 """Page web de la Tête NAM : http://tetenam.local:8080
 
 Affiche en direct la charge DSP, les xruns, la température et le throttling.
-Gère une chaîne de 1 à 3 NAM en série : ajouter, retirer, activer ou
-désactiver chacun, choisir le modèle, la qualité A2 et les niveaux.
+Règle le buffer JACK et la calibration d'entrée, et la chaîne fixe
+Pédale -> Ampli : activer ou désactiver chaque bloc, choisir le modèle,
+l'output mode, la qualité A2 et les niveaux.
 Uniquement la bibliothèque standard de Python : rien à installer.
-Les changements faits ici sont immédiats mais pas sauvegardés : au
-redémarrage, on repart de /etc/tete-nam.conf.
+Chaque changement est appliqué tout de suite et sauvegardé dans
+/etc/tete-nam.conf : la tête redémarre comme on l'a laissée.
 """
 import glob
 import json
@@ -24,55 +25,38 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import tetenam  # noqa: E402
 
 PORT = int(os.environ.get("TETE_NAM_PORT", "8080"))
-DOSSIER_MODELES = os.path.expanduser("~/nam")
-MAX_NAM = 3
+DOSSIER_MODELES = tetenam.DOSSIER_MODELES
 
 verrou = threading.Lock()          # un seul échange avec mod-host à la fois
-verrou_chaine = threading.RLock()  # une seule modification de la chaîne à la fois
+verrou_chaine = threading.RLock()  # une seule modification à la fois
 etat = {
     "xruns": 0,
     "dsp": None,
     "histo": deque(maxlen=120),    # 2 minutes de charge DSP
     "throttled": "?",
-    # La chaîne, dans l'ordre : [{"id", "chemin", "q", "in", "out", "actif"}]
-    # "id" est le numéro d'instance dans mod-host (client JACK effect_<id>)
-    "chaine": [],
-    "liens": set(),                # connexions JACK posées par nous
+    # Réglages en cours (même forme que tetenam.reglages()), sauvegardés
+    # dans /etc/tete-nam.conf à chaque changement
+    "r": None,
+    "redemarrage": 0,              # heure du dernier redémarrage demandé
 }
-
-
-def conf():
-    try:
-        return tetenam.lire_conf()
-    except OSError:
-        return {}
-
-
-def liens_voulus(chaine, c):
-    """Entrée -> NAM 1 -> NAM 2 -> ... -> sorties (les NAM désactivés laissent
-    passer le son tel quel, ils restent donc dans la chaîne)."""
-    liens = []
-    if not chaine:
-        return liens
-    liens.append((c.get("INPUT", "system:capture_1"), f"effect_{chaine[0]['id']}:input"))
-    for a, b in zip(chaine, chaine[1:]):
-        liens.append((f"effect_{a['id']}:output", f"effect_{b['id']}:input"))
-    for sortie in c.get("OUTPUTS", "system:playback_1").split():
-        liens.append((f"effect_{chaine[-1]['id']}:output", sortie))
-    return liens
 
 
 def reprendre_conf():
     """Au démarrage (ou quand le service redémarre), on repart des réglages :
     c'est ce que `tete-nam charger` vient de mettre en place."""
-    c = conf()
     with verrou_chaine:
-        etat["chaine"] = [
-            {"id": i, "chemin": m, "q": float(c.get("QUALITY", 0)),
-             "in": float(c.get("IN_DB", 0)), "out": float(c.get("OUT_DB", 0)), "actif": True}
-            for i, m in enumerate(tetenam.modeles_effectifs(c))
-        ]
-        etat["liens"] = set(liens_voulus(etat["chaine"], c))
+        try:
+            etat["r"] = tetenam.reglages()
+        except OSError:
+            etat["r"] = tetenam.reglages({})
+
+
+def sauver():
+    try:
+        tetenam.ecrire_conf(etat["r"])
+        return None
+    except OSError as e:
+        return f"Réglage appliqué mais pas sauvegardé ({e.strerror})"
 
 
 def mod_host(commande):
@@ -91,22 +75,29 @@ def ok(rep):
     return rep.startswith("resp ") and not rep.split()[1].startswith("-")
 
 
-def recabler():
-    """Met les connexions JACK en accord avec la chaîne. On coupe d'abord,
-    puis on rebranche : un court silence plutôt qu'un son doublé."""
-    voulus = set(liens_voulus(etat["chaine"], conf()))
-    for a, b in etat["liens"] - voulus:
-        mod_host(f"disconnect {tetenam.q(a)} {tetenam.q(b)}")
-    for a, b in voulus - etat["liens"]:
-        mod_host(f"connect {tetenam.q(a)} {tetenam.q(b)}")
-    etat["liens"] = voulus
-
-
 def trouver(i):
-    for s in etat["chaine"]:
-        if s["id"] == i:
-            return s
-    raise ValueError(f"Pas de NAM n°{i} dans la chaîne")
+    for b in etat["r"]["blocs"]:
+        if b["id"] == i:
+            return b
+    raise ValueError(f"Pas de bloc n°{i}")
+
+
+def appliquer(cmds):
+    """Envoie une suite de commandes à mod-host, s'arrête à la première erreur."""
+    for cmd in cmds:
+        rep = mod_host(cmd)
+        if not ok(rep):
+            return {"ok": False, "reponse": f"{cmd} : {rep}"}
+    return {"ok": True}
+
+
+def fini(r):
+    """Sauvegarde si tout s'est bien passé, et le dit à la page."""
+    if r.get("ok"):
+        err = sauver()
+        if err:
+            return {"ok": False, "erreur": err}
+    return r
 
 
 # --- Tâches de fond -------------------------------------------------------
@@ -162,7 +153,7 @@ def disponibles():
 # --- API -------------------------------------------------------------------
 
 def api_etat():
-    c = conf()
+    r = etat["r"]
     return {
         "service": tetenam.sh("systemctl is-active tete-nam"),
         "dsp": etat["dsp"],
@@ -170,28 +161,35 @@ def api_etat():
         "xruns": etat["xruns"],
         "temp": temperature(),
         "throttled": etat["throttled"],
-        "reglages": {k: c.get(k) for k in ("RATE", "PERIOD", "NPERIODS", "CARD")},
-        "chaine": etat["chaine"],
-        "max": MAX_NAM,
+        "reglages": {k: r[k] for k in ("RATE", "PERIOD", "NPERIODS", "CARD", "INPUT_DBU")},
+        "buffers": tetenam.BUFFERS,
+        "blocs": r["blocs"],
         "disponibles": disponibles(),
     }
 
 
 def api_modele(d):
     with verrou_chaine:
-        s = trouver(int(d["id"]))
+        b = trouver(int(d["id"]))
         chemin = d["chemin"]
+        if chemin == "" and b["id"] == 0:
+            # Pédale sans modèle : on la laisse passer le son
+            b["chemin"], b["actif"] = "", False
+            return fini(appliquer([f"bypass {b['id']} 1"]))
         if chemin not in disponibles():
             return {"ok": False, "erreur": "Fichier hors de ~/nam"}
-        rep = mod_host(f"patch_set {s['id']} {tetenam.q(tetenam.MODEL_PROP)} {tetenam.q(chemin)}")
-        if ok(rep):
-            s["chemin"] = chemin
-        return {"ok": ok(rep), "reponse": rep}
+        cmds = [f"patch_set {b['id']} {tetenam.q(tetenam.MODEL_PROP)} {tetenam.q(chemin)}"]
+        if b["actif"]:
+            cmds.append(f"bypass {b['id']} 0")
+        r = appliquer(cmds)
+        if r["ok"]:
+            b["chemin"] = chemin
+        return fini(r)
 
 
 def api_niveau(d):
     with verrou_chaine:
-        s = trouver(int(d["id"]))
+        b = trouver(int(d["id"]))
         sens, val = d["sens"], float(d["valeur"])
         if sens == "q":
             val, port = max(0.0, min(1.0, val)), "quality_scale"
@@ -200,57 +198,70 @@ def api_niveau(d):
             port = "input_level" if sens == "in" else "output_level"
         else:
             return {"ok": False, "erreur": "Réglage inconnu"}
-        rep = mod_host(f"param_set {s['id']} {port} {val}")
-        if ok(rep):
-            s[sens] = val
-        return {"ok": ok(rep), "reponse": rep}
+        r = appliquer([f"param_set {b['id']} {port} {val}"])
+        if r["ok"]:
+            b[sens] = val
+        return fini(r)
+
+
+def api_mode(d):
+    with verrou_chaine:
+        b = trouver(int(d["id"]))
+        mode = d["mode"]
+        if mode not in tetenam.MODES:
+            return {"ok": False, "erreur": "Output mode inconnu"}
+        r = appliquer([f"param_set {b['id']} output_mode {tetenam.MODES[mode]}"])
+        if r["ok"]:
+            b["mode"] = mode
+        return fini(r)
 
 
 def api_actif(d):
     with verrou_chaine:
-        s = trouver(int(d["id"]))
+        b = trouver(int(d["id"]))
         actif = bool(d["actif"])
+        if actif and not b["chemin"]:
+            return {"ok": False, "erreur": f"Choisissez d'abord un modèle pour : {b['nom']}"}
         # bypass 1 = le son passe sans traitement
-        rep = mod_host(f"bypass {s['id']} {0 if actif else 1}")
-        if ok(rep):
-            s["actif"] = actif
-        return {"ok": ok(rep), "reponse": rep}
+        r = appliquer([f"bypass {b['id']} {0 if actif else 1}"])
+        if r["ok"]:
+            b["actif"] = actif
+        return fini(r)
 
 
-def api_ajouter(d):
+def api_calibration(d):
     with verrou_chaine:
-        if len(etat["chaine"]) >= MAX_NAM:
-            return {"ok": False, "erreur": f"{MAX_NAM} NAM maximum"}
-        dispo = disponibles()
-        if not dispo:
-            return {"ok": False, "erreur": "Aucun fichier .nam dans ~/nam"}
-        pris = {s["id"] for s in etat["chaine"]}
-        i = min(set(range(MAX_NAM + 10)) - pris)
-        chemin = d.get("chemin") if d.get("chemin") in dispo else dispo[0]
-        rep = mod_host(f"add {tetenam.q(tetenam.PLUGIN)} {i}")
-        if not ok(rep):
-            return {"ok": False, "reponse": rep}
-        # Nouveau NAM : qualité au plus léger, niveaux neutres
-        for cmd in (f"param_set {i} quality_scale 0", f"param_set {i} input_level 0",
-                    f"param_set {i} output_level 0",
-                    f"patch_set {i} {tetenam.q(tetenam.MODEL_PROP)} {tetenam.q(chemin)}"):
-            mod_host(cmd)
-        etat["chaine"].append({"id": i, "chemin": chemin, "q": 0.0, "in": 0.0,
-                               "out": 0.0, "actif": True})
-        recabler()
+        val = float(d["valeur"])
+        if not -60 <= val <= 60:
+            return {"ok": False, "erreur": "Calibration entre -60 et +60 dBu"}
+        # Même valeur pour les deux NAM : c'est l'entrée de la carte son
+        r = appliquer([f"param_set {b['id']} input_calibration {val}"
+                       for b in etat["r"]["blocs"]])
+        if r["ok"]:
+            etat["r"]["INPUT_DBU"] = val
+        return fini(r)
+
+
+def api_buffer(d):
+    with verrou_chaine:
+        taille = int(d["taille"])
+        if taille not in tetenam.BUFFERS:
+            return {"ok": False, "erreur": "Taille de buffer non proposée"}
+        if time.time() - etat["redemarrage"] < 10:
+            return {"ok": False, "erreur": "Redémarrage déjà en cours, patientez"}
+        etat["r"]["PERIOD"], etat["r"]["NPERIODS"] = taille, tetenam.NPERIODS
+        err = sauver()
+        if err:
+            return {"ok": False, "erreur": err}
+        # JACK ne change pas de buffer à chaud : on relance le service audio.
+        # Autorisé sans mot de passe par /etc/sudoers.d/tete-nam (install.sh).
+        p = subprocess.run(["sudo", "-n", "systemctl", "restart", "--no-block", "tete-nam"],
+                           capture_output=True, text=True, timeout=10)
+        if p.returncode:
+            return {"ok": False, "erreur": "Buffer sauvegardé, mais redémarrage refusé : "
+                    "relancez sudo ./tete-nam/install.sh, ou sudo systemctl restart tete-nam"}
+        etat["redemarrage"] = time.time()
         return {"ok": True}
-
-
-def api_retirer(d):
-    with verrou_chaine:
-        if len(etat["chaine"]) <= 1:
-            return {"ok": False, "erreur": "Il faut garder au moins un NAM"}
-        s = trouver(int(d["id"]))
-        etat["chaine"].remove(s)
-        # D'abord recâbler autour (coupe aussi ses liens), puis retirer le plugin
-        recabler()
-        rep = mod_host(f"remove {s['id']}")
-        return {"ok": ok(rep), "reponse": rep}
 
 
 TAILLE_MAX = 50 * 1024 * 1024   # 50 Mo, largement plus qu'un .nam
@@ -278,7 +289,7 @@ def api_envoyer(nom, contenu):
 
 
 ROUTES = {"/api/modele": api_modele, "/api/niveau": api_niveau, "/api/actif": api_actif,
-          "/api/ajouter": api_ajouter, "/api/retirer": api_retirer}
+          "/api/mode": api_mode, "/api/calibration": api_calibration, "/api/buffer": api_buffer}
 
 
 class Gestionnaire(BaseHTTPRequestHandler):
@@ -347,9 +358,13 @@ section.off{opacity:.45;border-left-color:#555}
 button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;color:var(--texte);background:#333}
 button.on{background:var(--ok);color:#000;font-weight:600}
 button.retirer{background:none;color:var(--doux);font-size:20px;padding:4px 10px}
-#ajouter,#envoyer{width:100%;margin-top:10px;padding:12px;font-size:17px;background:#2a2a2a;border:1px dashed #555}
+#envoyer{width:100%;margin-top:10px;padding:12px;font-size:17px;background:#2a2a2a;border:1px dashed #555}
 #infoEnvoi{font-size:13px;color:var(--doux);margin-top:6px;white-space:pre-line}
-#ajouter:disabled{opacity:.4;cursor:default}
+.ligne{display:flex;gap:8px;align-items:center;margin-top:6px}
+.ligne select{flex:1}
+input[type=number]{flex:1;min-width:0;background:#2a2a2a;color:var(--texte);border:1px solid #444;border-radius:6px;padding:8px;font-size:15px}
+.unite{color:var(--doux)}
+button:disabled{opacity:.4;cursor:default}
 select,input[type=range]{width:100%;accent-color:var(--accent)}
 select{background:#2a2a2a;color:var(--texte);border:1px solid #444;border-radius:6px;padding:8px;font-size:15px}
 label{display:flex;justify-content:space-between;color:var(--doux);font-size:13px;margin-top:10px}
@@ -365,15 +380,21 @@ label{display:flex;justify-content:space-between;color:var(--doux);font-size:13p
  <div class="carte"><div class="titre">Throttling</div><div class="valeur" id="thr" style="font-size:20px">–</div></div>
  <div class="carte"><div class="titre">Audio</div><div id="audio" style="margin-top:6px">–</div></div>
 </div>
-<h2>Chaîne (entrée → NAM 1 → … → ampli)</h2>
+<h2>Réglages audio</h2>
+<div class="carte" style="margin-top:10px">
+ <label>Buffer JACK (2 périodes) <span id="latence"></span></label>
+ <div class="ligne"><select id="buffer"></select><button id="appliquerBuffer">Appliquer</button></div>
+ <label>Calibration d'entrée (dBu pour 0 dBFS, M4 : 16) <span id="calActuelle"></span></label>
+ <div class="ligne"><input type="number" id="calibration" min="-60" max="60" step="0.1" inputmode="decimal"><span class="unite">dBu</span><button id="appliquerCal">OK</button></div>
+</div>
+<h2>Chaîne (entrée → Pédale → Ampli → power amp)</h2>
 <div id="chaine"></div>
-<button id="ajouter">+ Ajouter un NAM</button>
 <h2>Fichiers</h2>
 <button id="envoyer">Envoyer des fichiers .nam vers la tête</button>
 <input type="file" id="fichiers" accept=".nam" multiple hidden>
 <div id="infoEnvoi"></div>
 <div id="msg"></div>
-<div class="pied">Les réglages de la chaîne sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de /etc/tete-nam.conf. Les fichiers envoyés, eux, restent dans ~/nam.</div>
+<div class="pied">Chaque réglage est appliqué tout de suite et sauvegardé dans /etc/tete-nam.conf : la tête redémarre comme vous l'avez laissée. Changer le buffer relance l'audio (environ 5 s de silence).</div>
 <script>
 const $=id=>document.getElementById(id);
 let construit="", occupe=false;
@@ -391,33 +412,53 @@ function curseur(s,sens,txt,min,max,pas,unite){
    <input type="range" min="${min}" max="${max}" step="${pas}" value="${s[sens]}" data-id="${s.id}" data-sens="${sens}" data-unite="${unite}">`;
 }
 function chaine(e){
-  const cle=JSON.stringify([e.chaine,e.disponibles]);
+  const cle=JSON.stringify([e.blocs,e.disponibles]);
   if(cle===construit||occupe)return; construit=cle;
   let h="";
-  e.chaine.forEach((s,n)=>{
-    const opts=(e.disponibles.includes(s.chemin)?e.disponibles:[s.chemin,...e.disponibles])
-      .map(f=>`<option value="${f}"${f===s.chemin?" selected":""}>${nom(f)}</option>`).join("");
+  e.blocs.forEach(s=>{
+    const liste=(s.chemin===""||e.disponibles.includes(s.chemin))?e.disponibles:[s.chemin,...e.disponibles];
+    let opts=liste.map(f=>`<option value="${f}"${f===s.chemin?" selected":""}>${nom(f)}</option>`).join("");
+    if(s.id===0)opts=`<option value=""${s.chemin===""?" selected":""}>(aucune pédale)</option>`+opts;
+    const modes=[["calibrated","Calibrated"],["normalized","Normalized"]]
+      .map(([v,t])=>`<option value="${v}"${v===s.mode?" selected":""}>${t}</option>`).join("");
     h+=`<section class="carte${s.actif?"":" off"}">
-     <div class="entete"><b>NAM ${n+1}</b>
-      <button class="${s.actif?"on":""}" data-actif="${s.id}" data-etat="${s.actif?1:0}">${s.actif?"Activé":"Désactivé"}</button>
-      ${e.chaine.length>1?`<button class="retirer" data-retirer="${s.id}" title="Retirer">×</button>`:""}</div>
+     <div class="entete"><b>${s.nom}</b>
+      <button class="${s.actif?"on":""}" data-actif="${s.id}" data-etat="${s.actif?1:0}">${s.actif?"Activé":"Désactivé"}</button></div>
      <select data-id="${s.id}" class="mod">${opts}</select>
+     <label>Output mode</label>
+     <select data-id="${s.id}" class="mode">${modes}</select>
      ${curseur(s,"q","Qualité A2 (0 = léger, 1 = complet)",0,1,0.05,"")}
      ${curseur(s,"in","Entrée",-20,20,0.5," dB")}
      ${curseur(s,"out","Sortie",-20,20,0.5," dB")}</section>`;
   });
   $("chaine").innerHTML=h;
-  $("ajouter").disabled=e.chaine.length>=e.max;
-  $("ajouter").textContent=e.chaine.length>=e.max?`${e.max} NAM maximum`:"+ Ajouter un NAM";
   document.querySelectorAll(".mod").forEach(x=>x.onchange=()=>post("/api/modele",{id:x.dataset.id,chemin:x.value}));
+  document.querySelectorAll(".mode").forEach(x=>x.onchange=()=>post("/api/mode",{id:x.dataset.id,mode:x.value}));
   document.querySelectorAll("[data-actif]").forEach(b=>b.onclick=()=>post("/api/actif",{id:b.dataset.actif,actif:b.dataset.etat!=="1"}));
-  document.querySelectorAll("[data-retirer]").forEach(b=>b.onclick=()=>{if(confirm("Retirer ce NAM ?"))post("/api/retirer",{id:b.dataset.retirer})});
-  document.querySelectorAll("input[type=range]").forEach(r=>{
+  document.querySelectorAll("#chaine input[type=range]").forEach(r=>{
     r.oninput=()=>{$("v"+r.dataset.sens+r.dataset.id).textContent=r.value+r.dataset.unite;occupe=true;};
     r.onchange=async()=>{occupe=false;await post("/api/niveau",{id:r.dataset.id,sens:r.dataset.sens,valeur:r.value});};
   });
 }
-$("ajouter").onclick=()=>post("/api/ajouter");
+let audioConstruit="";
+function audio(e){
+  const r=e.reglages, cle=JSON.stringify([r,e.buffers]);
+  $("latence").textContent=`actuel : ${r.PERIOD} × ${r.NPERIODS} ≈ ${(r.PERIOD*r.NPERIODS/r.RATE*1000).toFixed(1)} ms`;
+  $("calActuelle").textContent=`actuel : ${r.INPUT_DBU} dBu`;
+  if(cle===audioConstruit)return; audioConstruit=cle;
+  $("buffer").innerHTML=e.buffers.map(t=>`<option value="${t}"${t===r.PERIOD?" selected":""}>${t} (≈ ${(t*2/r.RATE*1000).toFixed(1)} ms)</option>`).join("");
+  if(document.activeElement!==$("calibration"))$("calibration").value=r.INPUT_DBU;
+}
+$("appliquerBuffer").onclick=async()=>{
+  const t=+$("buffer").value;
+  if(!confirm(`Passer le buffer à ${t} × 2 ? L'audio coupe environ 5 secondes.`))return;
+  $("appliquerBuffer").disabled=true;
+  await post("/api/buffer",{taille:t});
+  setTimeout(()=>$("appliquerBuffer").disabled=false,10000);
+};
+const envoyerCal=()=>post("/api/calibration",{valeur:$("calibration").value}).then(()=>{audioConstruit="";});
+$("appliquerCal").onclick=envoyerCal;
+$("calibration").onkeydown=ev=>{if(ev.key==="Enter")envoyerCal();};
 $("envoyer").onclick=()=>$("fichiers").click();
 $("fichiers").onchange=async()=>{
   const liste=[...$("fichiers").files], lignes=[];
@@ -448,8 +489,8 @@ async function maj(){
     $("xruns").textContent=e.xruns;$("xruns").style.color=e.xruns?"var(--mal)":"var(--ok)";
     $("temp").textContent=e.temp==null?"–":e.temp.toFixed(0)+" °C";$("temp").style.color=couleur(e.temp,70,80);
     $("thr").textContent=e.throttled==="0x0"?"aucun":e.throttled;$("thr").style.color=e.throttled==="0x0"?"var(--ok)":"var(--mal)";
-    const r=e.reglages;$("audio").textContent=`${r.RATE/1000} kHz, buffer ${r.PERIOD} × ${r.NPERIODS}`;
-    graphe(e.histo);chaine(e);
+    const r=e.reglages;$("audio").textContent=`${r.RATE/1000} kHz, buffer ${r.PERIOD} × ${r.NPERIODS}, entrée ${r.INPUT_DBU} dBu`;
+    graphe(e.histo);chaine(e);audio(e);
   }catch(err){$("service").textContent="hors ligne";$("service").style.background="var(--mal)";}
 }
 maj();setInterval(maj,1000);

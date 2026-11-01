@@ -85,6 +85,21 @@ else
     echo "Réglages existants gardés : /etc/tete-nam.conf"
 fi
 sudo -u "$UTIL" mkdir -p "$MAISON/nam"
+# La page web enregistre les réglages dans ce fichier : il est à l'utilisateur
+chown "$UTIL" /etc/tete-nam.conf
+chmod 644 /etc/tete-nam.conf
+if ! grep -q '^AMPLI_MODEL=' /etc/tete-nam.conf; then
+    cp /etc/tete-nam.conf /etc/tete-nam.conf.avant-chaine-fixe
+    sudo -u "$UTIL" python3 /opt/tete-nam/tetenam.py migrer
+    echo "Réglages convertis à la chaîne Pédale -> Ampli (ancienne version :"
+    echo "/etc/tete-nam.conf.avant-chaine-fixe)"
+fi
+# La page web relance le service audio quand on change le buffer
+echo "$UTIL ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block tete-nam" \
+    > /etc/sudoers.d/tete-nam
+chmod 440 /etc/sudoers.d/tete-nam
+visudo -cf /etc/sudoers.d/tete-nam >/dev/null \
+    || { rm -f /etc/sudoers.d/tete-nam; echo "ERREUR : règle sudo refusée"; exit 1; }
 
 etape "6/7 Réglages temps réel"
 usermod -aG audio,systemd-journal "$UTIL"
@@ -109,11 +124,13 @@ install -m 644 "$ICI/tete-nam-wifi.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable tete-nam.service tete-nam-web.service tete-nam-wifi.service
 systemctl restart tete-nam-web.service || true
+# Si la tête tournait déjà, on recharge l'audio avec le nouveau plugin
+if systemctl is-active -q tete-nam.service; then systemctl restart tete-nam.service; fi
 
 echo
 echo "Installation terminée."
-echo "1. Copiez votre modèle dans $MAISON/nam/ (nom : modele1.nam, ou changez MODEL1"
-echo "   dans /etc/tete-nam.conf avec : sudo nano /etc/tete-nam.conf)"
+echo "1. Copiez vos modèles dans $MAISON/nam/ (ou envoyez-les depuis la page web),"
+echo "   puis choisissez la pédale et l'ampli sur la page"
 echo "2. Redémarrez :  sudo reboot"
 echo "3. Vérifiez   :  tete-nam etat"
 echo "   ou dans un navigateur : http://$(hostname).local:8080"
