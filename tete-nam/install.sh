@@ -1,6 +1,7 @@
 #!/bin/bash
 # Installation de la Tête NAM sur Raspberry Pi OS Lite 64 bits.
 # Usage (depuis le dossier du dépôt cloné) :  sudo ./tete-nam/install.sh
+# Pour forcer la compilation du plugin sur le Pi :  sudo ./tete-nam/install.sh --compiler
 set -euo pipefail
 
 # Version de mod-host testée (dépôt moddevices/mod-host)
@@ -27,20 +28,31 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git build-essential cmake pkg-config python3 \
     jackd2 libjack-jackd2-dev liblilv-dev lilv-utils libreadline-dev libfftw3-dev
 
-etape "2/7 Swap temporaire (le Pi 3 n'a que 1 Go de RAM pour compiler)"
-SWAP=/var/tmp/tete-nam.swap
-if [ ! -e "$SWAP" ]; then
-    fallocate -l 2G "$SWAP" && chmod 600 "$SWAP" && mkswap "$SWAP" >/dev/null
-fi
-swapon "$SWAP" 2>/dev/null || true
-trap 'swapoff '"$SWAP"' 2>/dev/null; rm -f '"$SWAP" EXIT
-
-etape "3/7 Compilation du plugin NAM (long : 30 à 90 min sur Pi 3)"
+etape "2/7 Plugin NAM : version précompilée ou compilation"
 sudo -u "$UTIL" git -C "$DEPOT" submodule update --init --recursive
-sudo -u "$UTIL" mkdir -p "$DEPOT/build"
-sudo -u "$UTIL" cmake -S "$DEPOT" -B "$DEPOT/build" -DCMAKE_BUILD_TYPE=Release -DSMART_BYPASS_ENABLED=ON
-sudo -u "$UTIL" cmake --build "$DEPOT/build" -j2
-cmake --install "$DEPOT/build"     # -> /usr/local/lib/lv2/neural_amp_modeler.lv2
+PRECOMP="$ICI/precompile"
+if [ "${1:-}" != "--compiler" ] && [ "$(uname -m)" = aarch64 ] \
+   && [ -f "$PRECOMP/neural_amp_modeler.lv2-aarch64.tar.gz" ] \
+   && [ "$(sudo -u "$UTIL" "$PRECOMP/signature.sh")" = "$(cat "$PRECOMP/signature.txt" 2>/dev/null)" ]; then
+    echo "Version précompilée à jour trouvée : pas de compilation (quelques secondes)"
+    rm -rf /usr/local/lib/lv2/neural_amp_modeler.lv2
+    install -d /usr/local/lib/lv2
+    tar -C /usr/local/lib/lv2 -xzf "$PRECOMP/neural_amp_modeler.lv2-aarch64.tar.gz"
+else
+    echo "Pas de version précompilée à jour : compilation sur le Pi"
+    etape "3/7 Compilation du plugin NAM (35 à 50 min sur Pi 3)"
+    # Swap temporaire : le Pi 3 n'a que 1 Go de RAM pour compiler
+    SWAP=/var/tmp/tete-nam.swap
+    if [ ! -e "$SWAP" ]; then
+        fallocate -l 2G "$SWAP" && chmod 600 "$SWAP" && mkswap "$SWAP" >/dev/null
+    fi
+    swapon "$SWAP" 2>/dev/null || true
+    trap 'swapoff '"$SWAP"' 2>/dev/null; rm -f '"$SWAP" EXIT
+    sudo -u "$UTIL" mkdir -p "$DEPOT/build"
+    sudo -u "$UTIL" cmake -S "$DEPOT" -B "$DEPOT/build" -DCMAKE_BUILD_TYPE=Release -DSMART_BYPASS_ENABLED=ON
+    sudo -u "$UTIL" cmake --build "$DEPOT/build" -j2
+    cmake --install "$DEPOT/build"     # -> /usr/local/lib/lv2/neural_amp_modeler.lv2
+fi
 
 etape "4/7 Compilation de l'hôte mod-host"
 SRC="$MAISON/src/mod-host"

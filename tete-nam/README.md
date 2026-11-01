@@ -43,7 +43,11 @@ sudo ./tete-nam/install.sh
 
 Si vous aviez déjà lancé l'installation avant l'arrivée de la page web, mettez à jour avec `cd neural-amp-modeler-lv2 && git pull && sudo ./tete-nam/install.sh` (quelques minutes seulement, la compilation est déjà faite).
 
-Le script installe JACK, compile le plugin NAM et mod-host, règle le temps réel et le démarrage automatique. **La compilation prend 30 à 90 minutes sur un Pi 3.** Si la connexion SSH coupe pendant ce temps, reconnectez-vous et tapez `cd neural-amp-modeler-lv2 && sudo ./tete-nam/install.sh` : le script reprend là où il en était.
+Le script installe JACK, le plugin NAM et mod-host, règle le temps réel et le démarrage automatique. **Comptez 10 à 20 minutes sur un Pi 3**, surtout pour télécharger et installer les paquets.
+
+Le plugin NAM est livré **précompilé** dans `tete-nam/precompile/` (pour Raspberry Pi OS 64 bits, Bookworm ou Trixie) : le script l'utilise s'il correspond exactement aux sources du dépôt, sinon il le compile sur le Pi (35 à 50 minutes de plus sur un Pi 3). Pour forcer la compilation sur le Pi : `sudo ./tete-nam/install.sh --compiler`. Pour refaire la version précompilée sur un PC Linux, voir `tete-nam/precompile/construire.sh`.
+
+Si la connexion SSH coupe pendant l'installation, reconnectez-vous et tapez `cd neural-amp-modeler-lv2 && sudo ./tete-nam/install.sh` : le script reprend là où il en était.
 
 ## 4. Copier le modèle
 
