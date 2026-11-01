@@ -45,7 +45,8 @@ def reprendre_conf():
     """Au démarrage (ou quand le service redémarre), on repart des réglages."""
     c = conf()
     etat["modeles"] = {i: m for i, m in enumerate((c.get("MODEL1", ""), c.get("MODEL2", ""))) if m}
-    etat["niveaux"] = {i: {"in": float(c.get("IN_DB", 0)), "out": float(c.get("OUT_DB", 0))}
+    etat["niveaux"] = {i: {"in": float(c.get("IN_DB", 0)), "out": float(c.get("OUT_DB", 0)),
+                           "q": float(c.get("QUALITY", 0))}
                        for i in etat["modeles"]}
 
 
@@ -140,10 +141,13 @@ def api_modele(d):
 
 def api_niveau(d):
     i, sens, db = int(d["num"]), d["sens"], float(d["db"])
-    if i not in etat["modeles"] or sens not in ("in", "out"):
+    if i not in etat["modeles"] or sens not in ("in", "out", "q"):
         return {"ok": False}
-    db = max(-20.0, min(20.0, db))
-    port = "input_level" if sens == "in" else "output_level"
+    if sens == "q":
+        db = max(0.0, min(1.0, db))
+    else:
+        db = max(-20.0, min(20.0, db))
+    port = {"in": "input_level", "out": "output_level", "q": "quality_scale"}[sens]
     rep = mod_host(f"param_set {i} {port} {db}")
     ok = rep.startswith("resp 0")
     if ok:
@@ -235,20 +239,22 @@ function chaine(e){
   if(cle===construit||occupe)return; construit=cle;
   let h="";
   for(const [i,m] of Object.entries(e.modeles)){
-    const n=e.niveaux[i]||{in:0,out:0};
+    const n=e.niveaux[i]||{in:0,out:0,q:0};
     const opts=(e.disponibles.includes(m)?e.disponibles:[m,...e.disponibles])
       .map(f=>`<option value="${f}"${f===m?" selected":""}>${nom(f)}</option>`).join("");
     h+=`<section class="carte"><div class="titre">Modèle ${+i+1}</div>
      <select data-num="${i}" class="mod">${opts}</select>
+     <label>Qualité A2 (0 = léger, 1 = complet) <span id="vq${i}">${n.q}</span></label>
+     <input type="range" min="0" max="1" step="0.05" value="${n.q}" data-num="${i}" data-sens="q" data-unite="">
      <label>Entrée <span id="vi${i}">${n.in} dB</span></label>
-     <input type="range" min="-20" max="20" step="0.5" value="${n.in}" data-num="${i}" data-sens="in">
+     <input type="range" min="-20" max="20" step="0.5" value="${n.in}" data-num="${i}" data-sens="in" data-unite=" dB">
      <label>Sortie <span id="vo${i}">${n.out} dB</span></label>
-     <input type="range" min="-20" max="20" step="0.5" value="${n.out}" data-num="${i}" data-sens="out"></section>`;
+     <input type="range" min="-20" max="20" step="0.5" value="${n.out}" data-num="${i}" data-sens="out" data-unite=" dB"></section>`;
   }
   $("chaine").innerHTML=h;
   document.querySelectorAll(".mod").forEach(s=>s.onchange=()=>post("/api/modele",{num:s.dataset.num,chemin:s.value}));
   document.querySelectorAll("input[type=range]").forEach(r=>{
-    r.oninput=()=>{$((r.dataset.sens==="in"?"vi":"vo")+r.dataset.num).textContent=r.value+" dB";occupe=true;};
+    r.oninput=()=>{$({in:"vi",out:"vo",q:"vq"}[r.dataset.sens]+r.dataset.num).textContent=r.value+r.dataset.unite;occupe=true;};
     r.onchange=async()=>{await post("/api/niveau",{num:r.dataset.num,sens:r.dataset.sens,db:r.value});occupe=false;construit="";};
   });
 }

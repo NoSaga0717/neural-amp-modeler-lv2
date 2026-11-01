@@ -78,7 +78,7 @@ def charger():
         mh.cmd(f"add {q(PLUGIN)} {i}")
         mh.cmd(f"param_set {i} input_level {c.get('IN_DB', '0')}")
         mh.cmd(f"param_set {i} output_level {c.get('OUT_DB', '0')}")
-        mh.cmd(f"param_set {i} quality_scale {c.get('QUALITY', '1.0')}")
+        mh.cmd(f"param_set {i} quality_scale {c.get('QUALITY', '0.0')}")
         mh.cmd(f"patch_set {i} {q(MODEL_PROP)} {q(chemin)}")
         print(f"Modèle {i + 1} chargé : {chemin}")
     # Câblage : entrée -> modèle 1 -> (modèle 2) -> sorties

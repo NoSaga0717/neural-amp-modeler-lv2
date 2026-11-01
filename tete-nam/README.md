@@ -95,11 +95,11 @@ Changez les réglages avec `sudo nano /etc/tete-nam.conf` (Ctrl+O pour enregistr
 
 | Étape | Réglage | Ce qu'on regarde |
 |---|---|---|
-| A | 1 modèle lite, `PERIOD=256` | Ça sonne, charge DSP, 0 xrun sur 5 minutes de jeu |
-| B | 1 modèle lite, `PERIOD=128` | Idem. La latence doit devenir imperceptible |
+| A | 1 modèle A2, `QUALITY=0.0`, `PERIOD=256` | Ça sonne, charge DSP, 0 xrun sur 5 minutes de jeu |
+| B | Idem avec `PERIOD=128` | Idem. La latence doit devenir imperceptible |
 | C | `NPERIODS=2` (garder 128) | Encore moins de latence, si toujours 0 xrun |
-| D | 2 modèles : remplir `MODEL2=` | Test de charge (les deux modèles sont en série) |
-| E | Si ça craque : modèles feather | Valider la chaîne, la qualité se jugera sur le Pi 5 |
+| D | Monter `QUALITY` par pas de 0.1 (curseur de la page web) | Jusqu'où le Pi 3 tient : noter la valeur où la charge passe 85 % |
+| E | 2 modèles : remplir `MODEL2=` | Test de charge (les deux modèles sont en série) |
 
 Notez à chaque étape la charge DSP et les xruns. Repères :
 
@@ -124,7 +124,7 @@ tete-nam modele 1 ~/nam/autre_modele.nam
 | `INPUT`, `OUTPUTS` | Entrée guitare et sorties de la M4 |
 | `MODEL1`, `MODEL2` | Chemins des modèles `.nam` |
 | `IN_DB`, `OUT_DB` | Niveau avant et après le modèle, en dB |
-| `QUALITY` | Seulement pour les modèles NAM A2 (< 0.5 = lite) |
+| `QUALITY` | Taille du modèle NAM A2 qui tourne : 0.0 = la plus légère, 1.0 = complète |
 
 ## Si ça ne marche pas
 
