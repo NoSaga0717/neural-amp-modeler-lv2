@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Page web de la Tête NAM : http://tetenam.local:8080
 
-Affiche en direct la charge DSP, les xruns, la température et le throttling,
-et permet de changer de modèle et de régler les niveaux sans terminal.
+Affiche en direct la charge DSP, les xruns, la température et le throttling.
+Gère une chaîne de 1 à 3 NAM en série : ajouter, retirer, activer ou
+désactiver chacun, choisir le modèle, la qualité A2 et les niveaux.
 Uniquement la bibliothèque standard de Python : rien à installer.
 Les changements faits ici sont immédiats mais pas sauvegardés : au
 redémarrage, on repart de /etc/tete-nam.conf.
@@ -22,15 +23,19 @@ import tetenam  # noqa: E402
 
 PORT = int(os.environ.get("TETE_NAM_PORT", "8080"))
 DOSSIER_MODELES = os.path.expanduser("~/nam")
+MAX_NAM = 3
 
 verrou = threading.Lock()          # un seul échange avec mod-host à la fois
+verrou_chaine = threading.RLock()  # une seule modification de la chaîne à la fois
 etat = {
     "xruns": 0,
     "dsp": None,
     "histo": deque(maxlen=120),    # 2 minutes de charge DSP
     "throttled": "?",
-    "modeles": {},                 # numéro (0, 1) -> chemin
-    "niveaux": {},                 # numéro -> {"in": dB, "out": dB}
+    # La chaîne, dans l'ordre : [{"id", "chemin", "q", "in", "out", "actif"}]
+    # "id" est le numéro d'instance dans mod-host (client JACK effect_<id>)
+    "chaine": [],
+    "liens": set(),                # connexions JACK posées par nous
 }
 
 
@@ -41,13 +46,31 @@ def conf():
         return {}
 
 
+def liens_voulus(chaine, c):
+    """Entrée -> NAM 1 -> NAM 2 -> ... -> sorties (les NAM désactivés laissent
+    passer le son tel quel, ils restent donc dans la chaîne)."""
+    liens = []
+    if not chaine:
+        return liens
+    liens.append((c.get("INPUT", "system:capture_1"), f"effect_{chaine[0]['id']}:input"))
+    for a, b in zip(chaine, chaine[1:]):
+        liens.append((f"effect_{a['id']}:output", f"effect_{b['id']}:input"))
+    for sortie in c.get("OUTPUTS", "system:playback_1").split():
+        liens.append((f"effect_{chaine[-1]['id']}:output", sortie))
+    return liens
+
+
 def reprendre_conf():
-    """Au démarrage (ou quand le service redémarre), on repart des réglages."""
+    """Au démarrage (ou quand le service redémarre), on repart des réglages :
+    c'est ce que `tete-nam charger` vient de mettre en place."""
     c = conf()
-    etat["modeles"] = {i: m for i, m in enumerate((c.get("MODEL1", ""), c.get("MODEL2", ""))) if m}
-    etat["niveaux"] = {i: {"in": float(c.get("IN_DB", 0)), "out": float(c.get("OUT_DB", 0)),
-                           "q": float(c.get("QUALITY", 0))}
-                       for i in etat["modeles"]}
+    with verrou_chaine:
+        etat["chaine"] = [
+            {"id": i, "chemin": m, "q": float(c.get("QUALITY", 0)),
+             "in": float(c.get("IN_DB", 0)), "out": float(c.get("OUT_DB", 0)), "actif": True}
+            for i, m in enumerate(tetenam.modeles_effectifs(c))
+        ]
+        etat["liens"] = set(liens_voulus(etat["chaine"], c))
 
 
 def mod_host(commande):
@@ -62,6 +85,28 @@ def mod_host(commande):
             m.s.close()
 
 
+def ok(rep):
+    return rep.startswith("resp ") and not rep.split()[1].startswith("-")
+
+
+def recabler():
+    """Met les connexions JACK en accord avec la chaîne. On coupe d'abord,
+    puis on rebranche : un court silence plutôt qu'un son doublé."""
+    voulus = set(liens_voulus(etat["chaine"], conf()))
+    for a, b in etat["liens"] - voulus:
+        mod_host(f"disconnect {tetenam.q(a)} {tetenam.q(b)}")
+    for a, b in voulus - etat["liens"]:
+        mod_host(f"connect {tetenam.q(a)} {tetenam.q(b)}")
+    etat["liens"] = voulus
+
+
+def trouver(i):
+    for s in etat["chaine"]:
+        if s["id"] == i:
+            return s
+    raise ValueError(f"Pas de NAM n°{i} dans la chaîne")
+
+
 # --- Tâches de fond -------------------------------------------------------
 
 def suivre_journal():
@@ -70,7 +115,7 @@ def suivre_journal():
         depuis = tetenam.sh("systemctl show -p ActiveEnterTimestamp --value tete-nam") or "today"
         try:
             p = subprocess.Popen(["journalctl", "-u", "tete-nam", "-f", "-o", "cat", "-q",
-                                   "--since", depuis], stdout=subprocess.PIPE, text=True,
+                                  "--since", depuis], stdout=subprocess.PIPE, text=True,
                                  errors="replace")
         except OSError:
             time.sleep(10)
@@ -79,6 +124,7 @@ def suivre_journal():
         for ligne in p.stdout:
             if "Démarrage de JACK" in ligne:      # le service a redémarré
                 etat["xruns"] = 0
+            elif "Chaîne prête" in ligne:          # chaîne rechargée depuis la conf
                 reprendre_conf()
             elif "xrun" in ligne.lower():
                 etat["xruns"] += 1
@@ -107,6 +153,10 @@ def temperature():
         return None
 
 
+def disponibles():
+    return sorted(glob.glob(os.path.join(DOSSIER_MODELES, "**", "*.nam"), recursive=True))
+
+
 # --- API -------------------------------------------------------------------
 
 def api_etat():
@@ -119,40 +169,90 @@ def api_etat():
         "temp": temperature(),
         "throttled": etat["throttled"],
         "reglages": {k: c.get(k) for k in ("RATE", "PERIOD", "NPERIODS", "CARD")},
-        "modeles": {str(i): m for i, m in etat["modeles"].items()},
-        "niveaux": {str(i): v for i, v in etat["niveaux"].items()},
-        "disponibles": sorted(glob.glob(os.path.join(DOSSIER_MODELES, "**", "*.nam"),
-                                        recursive=True)),
+        "chaine": etat["chaine"],
+        "max": MAX_NAM,
+        "disponibles": disponibles(),
     }
 
 
 def api_modele(d):
-    i, chemin = int(d["num"]), d["chemin"]
-    if i not in etat["modeles"]:
-        return {"ok": False, "erreur": f"Pas de modèle {i + 1} dans la chaîne"}
-    if chemin not in api_etat()["disponibles"]:
-        return {"ok": False, "erreur": "Fichier hors de ~/nam"}
-    rep = mod_host(f"patch_set {i} {tetenam.q(tetenam.MODEL_PROP)} {tetenam.q(chemin)}")
-    ok = rep.startswith("resp 0")
-    if ok:
-        etat["modeles"][i] = chemin
-    return {"ok": ok, "reponse": rep}
+    with verrou_chaine:
+        s = trouver(int(d["id"]))
+        chemin = d["chemin"]
+        if chemin not in disponibles():
+            return {"ok": False, "erreur": "Fichier hors de ~/nam"}
+        rep = mod_host(f"patch_set {s['id']} {tetenam.q(tetenam.MODEL_PROP)} {tetenam.q(chemin)}")
+        if ok(rep):
+            s["chemin"] = chemin
+        return {"ok": ok(rep), "reponse": rep}
 
 
 def api_niveau(d):
-    i, sens, db = int(d["num"]), d["sens"], float(d["db"])
-    if i not in etat["modeles"] or sens not in ("in", "out", "q"):
-        return {"ok": False}
-    if sens == "q":
-        db = max(0.0, min(1.0, db))
-    else:
-        db = max(-20.0, min(20.0, db))
-    port = {"in": "input_level", "out": "output_level", "q": "quality_scale"}[sens]
-    rep = mod_host(f"param_set {i} {port} {db}")
-    ok = rep.startswith("resp 0")
-    if ok:
-        etat["niveaux"][i][sens] = db
-    return {"ok": ok, "reponse": rep}
+    with verrou_chaine:
+        s = trouver(int(d["id"]))
+        sens, val = d["sens"], float(d["valeur"])
+        if sens == "q":
+            val, port = max(0.0, min(1.0, val)), "quality_scale"
+        elif sens in ("in", "out"):
+            val = max(-20.0, min(20.0, val))
+            port = "input_level" if sens == "in" else "output_level"
+        else:
+            return {"ok": False, "erreur": "Réglage inconnu"}
+        rep = mod_host(f"param_set {s['id']} {port} {val}")
+        if ok(rep):
+            s[sens] = val
+        return {"ok": ok(rep), "reponse": rep}
+
+
+def api_actif(d):
+    with verrou_chaine:
+        s = trouver(int(d["id"]))
+        actif = bool(d["actif"])
+        # bypass 1 = le son passe sans traitement
+        rep = mod_host(f"bypass {s['id']} {0 if actif else 1}")
+        if ok(rep):
+            s["actif"] = actif
+        return {"ok": ok(rep), "reponse": rep}
+
+
+def api_ajouter(d):
+    with verrou_chaine:
+        if len(etat["chaine"]) >= MAX_NAM:
+            return {"ok": False, "erreur": f"{MAX_NAM} NAM maximum"}
+        dispo = disponibles()
+        if not dispo:
+            return {"ok": False, "erreur": "Aucun fichier .nam dans ~/nam"}
+        pris = {s["id"] for s in etat["chaine"]}
+        i = min(set(range(MAX_NAM + 10)) - pris)
+        chemin = d.get("chemin") if d.get("chemin") in dispo else dispo[0]
+        rep = mod_host(f"add {tetenam.q(tetenam.PLUGIN)} {i}")
+        if not ok(rep):
+            return {"ok": False, "reponse": rep}
+        # Nouveau NAM : qualité au plus léger, niveaux neutres
+        for cmd in (f"param_set {i} quality_scale 0", f"param_set {i} input_level 0",
+                    f"param_set {i} output_level 0",
+                    f"patch_set {i} {tetenam.q(tetenam.MODEL_PROP)} {tetenam.q(chemin)}"):
+            mod_host(cmd)
+        etat["chaine"].append({"id": i, "chemin": chemin, "q": 0.0, "in": 0.0,
+                               "out": 0.0, "actif": True})
+        recabler()
+        return {"ok": True}
+
+
+def api_retirer(d):
+    with verrou_chaine:
+        if len(etat["chaine"]) <= 1:
+            return {"ok": False, "erreur": "Il faut garder au moins un NAM"}
+        s = trouver(int(d["id"]))
+        etat["chaine"].remove(s)
+        # D'abord recâbler autour (coupe aussi ses liens), puis retirer le plugin
+        recabler()
+        rep = mod_host(f"remove {s['id']}")
+        return {"ok": ok(rep), "reponse": rep}
+
+
+ROUTES = {"/api/modele": api_modele, "/api/niveau": api_niveau, "/api/actif": api_actif,
+          "/api/ajouter": api_ajouter, "/api/retirer": api_retirer}
 
 
 class Gestionnaire(BaseHTTPRequestHandler):
@@ -177,15 +277,11 @@ class Gestionnaire(BaseHTTPRequestHandler):
             self.envoyer(404, "introuvable", "text/plain")
 
     def do_POST(self):
+        if self.path not in ROUTES:
+            return self.envoyer(404, "introuvable", "text/plain")
         n = int(self.headers.get("Content-Length", 0))
         try:
-            d = json.loads(self.rfile.read(n) or b"{}")
-            if self.path == "/api/modele":
-                r = api_modele(d)
-            elif self.path == "/api/niveau":
-                r = api_niveau(d)
-            else:
-                return self.envoyer(404, "introuvable", "text/plain")
+            r = ROUTES[self.path](json.loads(self.rfile.read(n) or b"{}"))
         except Exception as e:                  # on renvoie l'erreur à la page
             r = {"ok": False, "erreur": str(e)}
         self.envoyer(200, json.dumps(r), "application/json")
@@ -200,13 +296,22 @@ PAGE = r"""<!doctype html>
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--texte);font:16px/1.4 system-ui,sans-serif;padding:16px;max-width:720px;margin:auto}
 h1{font-size:22px;margin:0 0 12px;display:flex;justify-content:space-between;align-items:center}
+h2{font-size:15px;color:var(--doux);font-weight:500;margin:20px 0 0}
 #service{font-size:13px;padding:3px 10px;border-radius:12px;background:#333}
 .grille{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .carte{background:var(--carte);border-radius:10px;padding:12px}
 .titre{color:var(--doux);font-size:13px}
 .valeur{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}
 canvas{width:100%;height:70px;display:block;margin-top:6px}
-section{margin-top:14px}
+section.carte{margin-top:10px;border-left:4px solid var(--accent);transition:opacity .2s}
+section.off{opacity:.45;border-left-color:#555}
+.entete{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.entete b{flex:1;font-size:16px}
+button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;color:var(--texte);background:#333}
+button.on{background:var(--ok);color:#000;font-weight:600}
+button.retirer{background:none;color:var(--doux);font-size:20px;padding:4px 10px}
+#ajouter{width:100%;margin-top:10px;padding:12px;font-size:17px;background:#2a2a2a;border:1px dashed #555}
+#ajouter:disabled{opacity:.4;cursor:default}
 select,input[type=range]{width:100%;accent-color:var(--accent)}
 select{background:#2a2a2a;color:var(--texte);border:1px solid #444;border-radius:6px;padding:8px;font-size:15px}
 label{display:flex;justify-content:space-between;color:var(--doux);font-size:13px;margin-top:10px}
@@ -222,7 +327,9 @@ label{display:flex;justify-content:space-between;color:var(--doux);font-size:13p
  <div class="carte"><div class="titre">Throttling</div><div class="valeur" id="thr" style="font-size:20px">–</div></div>
  <div class="carte"><div class="titre">Audio</div><div id="audio" style="margin-top:6px">–</div></div>
 </div>
+<h2>Chaîne (entrée → NAM 1 → … → ampli)</h2>
 <div id="chaine"></div>
+<button id="ajouter">+ Ajouter un NAM</button>
 <div id="msg"></div>
 <div class="pied">Les changements sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de /etc/tete-nam.conf.</div>
 <script>
@@ -231,33 +338,44 @@ let construit="", occupe=false;
 const couleur=(v,a,b)=>v==null?"":v<a?"var(--ok)":v<b?"var(--moyen)":"var(--mal)";
 const nom=p=>p.split("/").pop();
 async function post(url,d){
-  const r=await (await fetch(url,{method:"POST",body:JSON.stringify(d)})).json();
-  $("msg").textContent=r.ok?"":(r.erreur||r.reponse||"Erreur");
+  try{
+    const r=await (await fetch(url,{method:"POST",body:JSON.stringify(d||{})})).json();
+    $("msg").textContent=r.ok?"":(r.erreur||r.reponse||"Erreur");
+  }catch(e){$("msg").textContent="Pas de réponse de la tête";}
+  construit="";maj();
+}
+function curseur(s,sens,txt,min,max,pas,unite){
+  return `<label>${txt} <span id="v${sens}${s.id}">${s[sens]}${unite}</span></label>
+   <input type="range" min="${min}" max="${max}" step="${pas}" value="${s[sens]}" data-id="${s.id}" data-sens="${sens}" data-unite="${unite}">`;
 }
 function chaine(e){
-  const cle=JSON.stringify([e.modeles,e.disponibles]);
+  const cle=JSON.stringify([e.chaine,e.disponibles]);
   if(cle===construit||occupe)return; construit=cle;
   let h="";
-  for(const [i,m] of Object.entries(e.modeles)){
-    const n=e.niveaux[i]||{in:0,out:0,q:0};
-    const opts=(e.disponibles.includes(m)?e.disponibles:[m,...e.disponibles])
-      .map(f=>`<option value="${f}"${f===m?" selected":""}>${nom(f)}</option>`).join("");
-    h+=`<section class="carte"><div class="titre">Modèle ${+i+1}</div>
-     <select data-num="${i}" class="mod">${opts}</select>
-     <label>Qualité A2 (0 = léger, 1 = complet) <span id="vq${i}">${n.q}</span></label>
-     <input type="range" min="0" max="1" step="0.05" value="${n.q}" data-num="${i}" data-sens="q" data-unite="">
-     <label>Entrée <span id="vi${i}">${n.in} dB</span></label>
-     <input type="range" min="-20" max="20" step="0.5" value="${n.in}" data-num="${i}" data-sens="in" data-unite=" dB">
-     <label>Sortie <span id="vo${i}">${n.out} dB</span></label>
-     <input type="range" min="-20" max="20" step="0.5" value="${n.out}" data-num="${i}" data-sens="out" data-unite=" dB"></section>`;
-  }
+  e.chaine.forEach((s,n)=>{
+    const opts=(e.disponibles.includes(s.chemin)?e.disponibles:[s.chemin,...e.disponibles])
+      .map(f=>`<option value="${f}"${f===s.chemin?" selected":""}>${nom(f)}</option>`).join("");
+    h+=`<section class="carte${s.actif?"":" off"}">
+     <div class="entete"><b>NAM ${n+1}</b>
+      <button class="${s.actif?"on":""}" data-actif="${s.id}" data-etat="${s.actif?1:0}">${s.actif?"Activé":"Désactivé"}</button>
+      ${e.chaine.length>1?`<button class="retirer" data-retirer="${s.id}" title="Retirer">×</button>`:""}</div>
+     <select data-id="${s.id}" class="mod">${opts}</select>
+     ${curseur(s,"q","Qualité A2 (0 = léger, 1 = complet)",0,1,0.05,"")}
+     ${curseur(s,"in","Entrée",-20,20,0.5," dB")}
+     ${curseur(s,"out","Sortie",-20,20,0.5," dB")}</section>`;
+  });
   $("chaine").innerHTML=h;
-  document.querySelectorAll(".mod").forEach(s=>s.onchange=()=>post("/api/modele",{num:s.dataset.num,chemin:s.value}));
+  $("ajouter").disabled=e.chaine.length>=e.max;
+  $("ajouter").textContent=e.chaine.length>=e.max?`${e.max} NAM maximum`:"+ Ajouter un NAM";
+  document.querySelectorAll(".mod").forEach(x=>x.onchange=()=>post("/api/modele",{id:x.dataset.id,chemin:x.value}));
+  document.querySelectorAll("[data-actif]").forEach(b=>b.onclick=()=>post("/api/actif",{id:b.dataset.actif,actif:b.dataset.etat!=="1"}));
+  document.querySelectorAll("[data-retirer]").forEach(b=>b.onclick=()=>{if(confirm("Retirer ce NAM ?"))post("/api/retirer",{id:b.dataset.retirer})});
   document.querySelectorAll("input[type=range]").forEach(r=>{
-    r.oninput=()=>{$({in:"vi",out:"vo",q:"vq"}[r.dataset.sens]+r.dataset.num).textContent=r.value+r.dataset.unite;occupe=true;};
-    r.onchange=async()=>{await post("/api/niveau",{num:r.dataset.num,sens:r.dataset.sens,db:r.value});occupe=false;construit="";};
+    r.oninput=()=>{$("v"+r.dataset.sens+r.dataset.id).textContent=r.value+r.dataset.unite;occupe=true;};
+    r.onchange=async()=>{occupe=false;await post("/api/niveau",{id:r.dataset.id,sens:r.dataset.sens,valeur:r.value});};
   });
 }
+$("ajouter").onclick=()=>post("/api/ajouter");
 function graphe(h){
   const c=$("graphe"),x=c.getContext("2d"),w=c.width=c.clientWidth*devicePixelRatio,ht=c.height=70*devicePixelRatio;
   x.clearRect(0,0,w,ht);

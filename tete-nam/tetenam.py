@@ -6,6 +6,8 @@
   tete-nam cpu                affiche la charge DSP de JACK
   tete-nam etat               résumé : service, DSP, xruns, température
 """
+import glob
+import os
 import shlex
 import socket
 import subprocess
@@ -64,17 +66,26 @@ def q(x):
     return '"' + x.replace('"', '\\"') + '"'
 
 
+def modeles_effectifs(c):
+    """Modèles à charger. Si MODEL1 n'existe pas, on prend le premier .nam
+    trouvé dans ~/nam : la tête démarre toujours avec un NAM."""
+    m1 = c.get("MODEL1", "")
+    if not os.path.isfile(m1):
+        tous = sorted(glob.glob(os.path.expanduser("~/nam/**/*.nam"), recursive=True))
+        m1 = tous[0] if tous else ""
+    return [m for m in (m1, c.get("MODEL2", "")) if m]
+
+
 def charger():
     c = lire_conf()
-    modeles = [m for m in (c.get("MODEL1", ""), c.get("MODEL2", "")) if m]
+    modeles = modeles_effectifs(c)
     if not modeles:
-        sys.exit("Aucun modèle dans /etc/tete-nam.conf (MODEL1)")
+        sys.exit("Aucun modèle : copiez un fichier .nam dans ~/nam")
+    for chemin in modeles:
+        if not os.path.isfile(chemin):
+            sys.exit(f"Fichier modèle introuvable : {chemin}")
     mh = ModHost()
     for i, chemin in enumerate(modeles):
-        try:
-            open(chemin, "rb").close()
-        except OSError:
-            sys.exit(f"Fichier modèle introuvable : {chemin}")
         mh.cmd(f"add {q(PLUGIN)} {i}")
         mh.cmd(f"param_set {i} input_level {c.get('IN_DB', '0')}")
         mh.cmd(f"param_set {i} output_level {c.get('OUT_DB', '0')}")

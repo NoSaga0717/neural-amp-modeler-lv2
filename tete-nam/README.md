@@ -85,7 +85,15 @@ watch -n 1 tete-nam etat
 
 ### Ou depuis un navigateur
 
-Sur un téléphone ou un ordinateur connecté au même Wi-Fi, ouvrez **http://tetenam.local:8080**. La page affiche en direct la charge DSP (avec un graphe des 2 dernières minutes), les xruns, la température et le throttling. Elle permet aussi de choisir le modèle parmi les fichiers `.nam` de `~/nam` et de régler les niveaux d'entrée et de sortie.
+Sur un téléphone ou un ordinateur connecté au même Wi-Fi, ouvrez **http://tetenam.local:8080**. La page affiche en direct la charge DSP (avec un graphe des 2 dernières minutes), les xruns, la température et le throttling.
+
+Elle gère aussi la chaîne de NAM, branchés en série (entrée → NAM 1 → NAM 2 → NAM 3 → ampli) :
+
+- au démarrage, un NAM est chargé avec la qualité à 0 (le plus léger) ;
+- **+ Ajouter un NAM** en ajoute un, jusqu'à 3 ;
+- **Activé / Désactivé** laisse passer le son sans traitement. Un NAM désactivé reste chargé et ne consomme presque plus de processeur ;
+- **×** retire un NAM ;
+- pour chacun : choix du fichier `.nam` dans `~/nam`, qualité A2 de 0 à 1, niveaux d'entrée et de sortie.
 
 Ces changements sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de `/etc/tete-nam.conf`. La page tourne en priorité basse pour ne jamais gêner l'audio. Si elle ne répond pas : `journalctl -u tete-nam-web -n 30`.
 

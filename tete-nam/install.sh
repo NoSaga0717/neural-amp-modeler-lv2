@@ -38,7 +38,7 @@ trap 'swapoff '"$SWAP"' 2>/dev/null; rm -f '"$SWAP" EXIT
 etape "3/7 Compilation du plugin NAM (long : 30 à 90 min sur Pi 3)"
 sudo -u "$UTIL" git -C "$DEPOT" submodule update --init --recursive
 sudo -u "$UTIL" mkdir -p "$DEPOT/build"
-sudo -u "$UTIL" cmake -S "$DEPOT" -B "$DEPOT/build" -DCMAKE_BUILD_TYPE=Release
+sudo -u "$UTIL" cmake -S "$DEPOT" -B "$DEPOT/build" -DCMAKE_BUILD_TYPE=Release -DSMART_BYPASS_ENABLED=ON
 sudo -u "$UTIL" cmake --build "$DEPOT/build" -j2
 cmake --install "$DEPOT/build"     # -> /usr/local/lib/lv2/neural_amp_modeler.lv2
 
