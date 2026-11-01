@@ -32,7 +32,7 @@ echo "Démarrage de mod-host"
 mod-host -n -p 5555 &
 HOST_PID=$!
 
-if ! python3 /opt/tete-nam/tete-nam.py charger; then
+if ! python3 /opt/tete-nam/tetenam.py charger; then
     echo "ERREUR : la chaîne NAM n'a pas pu être chargée"
     kill "$HOST_PID" "$JACK_PID" 2>/dev/null
     exit 1

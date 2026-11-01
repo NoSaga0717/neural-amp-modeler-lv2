@@ -41,6 +41,8 @@ cd neural-amp-modeler-lv2
 sudo ./tete-nam/install.sh
 ```
 
+Si vous aviez déjà lancé l'installation avant l'arrivée de la page web, mettez à jour avec `cd neural-amp-modeler-lv2 && git pull && sudo ./tete-nam/install.sh` (quelques minutes seulement, la compilation est déjà faite).
+
 Le script installe JACK, compile le plugin NAM et mod-host, règle le temps réel et le démarrage automatique. **La compilation prend 30 à 90 minutes sur un Pi 3.** Si la connexion SSH coupe pendant ce temps, reconnectez-vous et tapez `cd neural-amp-modeler-lv2 && sudo ./tete-nam/install.sh` : le script reprend là où il en était.
 
 ## 4. Copier le modèle
@@ -81,6 +83,12 @@ watch -n 1 tete-nam etat
 
 (Ctrl+C pour sortir.) Le journal complet : `journalctl -u tete-nam -f`.
 
+### Ou depuis un navigateur
+
+Sur un téléphone ou un ordinateur connecté au même Wi-Fi, ouvrez **http://tetenam.local:8080**. La page affiche en direct la charge DSP (avec un graphe des 2 dernières minutes), les xruns, la température et le throttling. Elle permet aussi de choisir le modèle parmi les fichiers `.nam` de `~/nam` et de régler les niveaux d'entrée et de sortie.
+
+Ces changements sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de `/etc/tete-nam.conf`. La page tourne en priorité basse pour ne jamais gêner l'audio. Si elle ne répond pas : `journalctl -u tete-nam-web -n 30`.
+
 ## 7. Procédure de test
 
 Changez les réglages avec `sudo nano /etc/tete-nam.conf` (Ctrl+O pour enregistrer, Ctrl+X pour sortir), puis `sudo systemctl restart tete-nam`.
@@ -100,7 +108,7 @@ Notez à chaque étape la charge DSP et les xruns. Repères :
 - **Température** sous 80 °C. Au-delà, le Pi ralentit : mettez un dissipateur, voire un petit ventilateur.
 - **Throttling** `0x0`. Autre chose = alimentation trop faible (prenez l'alim officielle 2,5 A, la M4 tire sur l'USB du Pi) ou surchauffe.
 
-Pour essayer un autre modèle sans redémarrer :
+Pour essayer un autre modèle sans redémarrer (ou depuis la page web) :
 
 ```bash
 tete-nam modele 1 ~/nam/autre_modele.nam

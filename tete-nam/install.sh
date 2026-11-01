@@ -58,8 +58,8 @@ fi
 
 etape "5/7 Fichiers de la Tête NAM"
 install -d /opt/tete-nam
-install -m 755 "$ICI/run.sh" "$ICI/cpu-performance.sh" "$ICI/tete-nam.py" /opt/tete-nam/
-ln -sf /opt/tete-nam/tete-nam.py /usr/local/bin/tete-nam
+install -m 755 "$ICI/run.sh" "$ICI/cpu-performance.sh" "$ICI/tetenam.py" "$ICI/web.py" /opt/tete-nam/
+ln -sf /opt/tete-nam/tetenam.py /usr/local/bin/tete-nam
 if [ ! -e /etc/tete-nam.conf ]; then
     sed "s#__HOME__#$MAISON#" "$ICI/tete-nam.conf" > /etc/tete-nam.conf
     echo "Réglages créés : /etc/tete-nam.conf"
@@ -84,9 +84,12 @@ for opt in threadirqs usbcore.autosuspend=-1; do
 done
 
 etape "7/7 Démarrage automatique"
-sed "s/__USER__/$UTIL/" "$ICI/tete-nam.service" > /etc/systemd/system/tete-nam.service
+for svc in tete-nam tete-nam-web; do
+    sed "s/__USER__/$UTIL/" "$ICI/$svc.service" > "/etc/systemd/system/$svc.service"
+done
 systemctl daemon-reload
-systemctl enable tete-nam.service
+systemctl enable tete-nam.service tete-nam-web.service
+systemctl restart tete-nam-web.service || true
 
 echo
 echo "Installation terminée."
@@ -94,3 +97,4 @@ echo "1. Copiez votre modèle dans $MAISON/nam/ (nom : modele1.nam, ou changez M
 echo "   dans /etc/tete-nam.conf avec : sudo nano /etc/tete-nam.conf)"
 echo "2. Redémarrez :  sudo reboot"
 echo "3. Vérifiez   :  tete-nam etat"
+echo "   ou dans un navigateur : http://$(hostname).local:8080"

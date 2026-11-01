@@ -1,0 +1,16 @@
+[Unit]
+Description=Tete NAM - page web (http://tetenam.local:8080)
+After=tete-nam.service network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+ExecStart=/usr/bin/python3 /opt/tete-nam/web.py
+Restart=always
+RestartSec=3
+# Priorité basse : la page ne doit jamais gêner l'audio
+Nice=15
+CPUSchedulingPolicy=idle
+
+[Install]
+WantedBy=multi-user.target
