@@ -1,0 +1,23 @@
+[Unit]
+Description=Tete NAM - pont Bluetooth (BLE) pour l'appli Android
+After=bluetooth.target tete-nam-web.service
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+# root : BlueZ n'accepte un service GATT que d'un compte autorisé. Le pont ne
+# fait que transmettre à la page web locale (127.0.0.1:8080), rien d'autre.
+ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
+ExecStart=/usr/bin/python3 /opt/tete-nam/ble.py
+Restart=always
+RestartSec=5
+# Priorité basse : le Bluetooth ne doit jamais gêner l'audio
+Nice=15
+CPUSchedulingPolicy=idle
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

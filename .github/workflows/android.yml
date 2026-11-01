@@ -1,0 +1,55 @@
+name: Appli Android Tete NAM
+
+# Construit l'APK de l'appli Bluetooth (tete-nam/android) et le publie dans
+# la release "appli-android" : lien de téléchargement direct depuis le téléphone.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tete-nam/android/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tete-nam/android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Construire l'APK
+        env:
+          NUMERO_BUILD: ${{ github.run_number }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk TeteNAM.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TeteNAM-apk
+          path: tete-nam/android/TeteNAM.apk
+
+      - name: Publier dans la release appli-android
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="APK de l'appli Bluetooth Tête NAM (build ${{ github.run_number }}, branche ${{ github.ref_name }}, commit ${GITHUB_SHA::7}). Ouvrir ce lien sur le téléphone et installer TeteNAM.apk."
+          if gh release view appli-android >/dev/null 2>&1; then
+            gh release edit appli-android --notes "$NOTES"
+          else
+            gh release create appli-android --target "$GITHUB_SHA" --prerelease \
+              --title "Appli Android Tête NAM" --notes "$NOTES"
+          fi
+          gh release upload appli-android TeteNAM.apk --clobber

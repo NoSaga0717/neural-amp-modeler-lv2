@@ -161,6 +161,22 @@ Pour essayer un autre modèle sans redémarrer (ou depuis la page web) :
 tete-nam modele ampli ~/nam/autre_modele.nam     # ou : tete-nam modele pedale ...
 ```
 
+## Appli Android (Bluetooth)
+
+Pour régler la tête sans Wi-Fi : l'appli Android **Tête NAM** se connecte en Bluetooth Low Energy et propose les mêmes réglages que la page web (mesures, buffer, calibration, chaîne Pédale → Ampli, envoi de fichiers .nam). La page web et le Wi-Fi restent disponibles : les deux voient et changent exactement les mêmes réglages.
+
+1. Sur le Pi : `cd neural-amp-modeler-lv2 && git pull && sudo ./tete-nam/install.sh` (installe le service `tete-nam-ble`).
+2. Sur le téléphone, ouvrez https://github.com/NoSaga0717/neural-amp-modeler-lv2/releases/tag/appli-android et touchez **TeteNAM.apk**. Android demande d'autoriser l'installation depuis le navigateur : acceptez (une seule fois).
+3. Ouvrez l'appli, acceptez l'autorisation « Appareils à proximité ». Elle trouve la tête toute seule (nom Bluetooth `TeteNAM`), aucun appairage à faire.
+
+Pour mettre l'appli à jour, retéléchargez le même lien : la nouvelle version s'installe par-dessus. L'APK est reconstruit automatiquement par GitHub à chaque modification de `tete-nam/android/`.
+
+- Journal du pont Bluetooth : `journalctl -u tete-nam-ble -f` (« Visible en Bluetooth sous le nom TeteNAM », puis « Appli connectée »).
+- Une seule appli connectée à la fois. Portée : une dizaine de mètres.
+- L'envoi de fichiers .nam en Bluetooth est lent (environ une minute par Mo) : pour beaucoup de modèles, la page web en Wi-Fi reste plus rapide.
+- Android 11 et moins : la localisation du téléphone doit être activée pour que la recherche Bluetooth marche (exigence d'Android).
+- Le pont ne fait que transmettre à la page web locale : si la page web est arrêtée (`systemctl status tete-nam-web`), l'appli affiche « Page web de la tête injoignable ».
+
 ## Réglages (`/etc/tete-nam.conf`)
 
 | Réglage | Rôle |
