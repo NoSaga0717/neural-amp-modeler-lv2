@@ -95,15 +95,17 @@ watch -n 1 tete-nam etat
 
 Sur un téléphone ou un ordinateur connecté au même Wi-Fi, ouvrez **http://tetenam.local:8080**. La page affiche en direct la charge DSP (avec un graphe des 2 dernières minutes), les xruns, la température et le throttling.
 
-Elle permet d'envoyer vos fichiers `.nam` sur la tête (bouton en bas de page). Elle gère aussi la chaîne de NAM, branchés en série (entrée → NAM 1 → NAM 2 → NAM 3 → ampli) :
+Elle permet d'envoyer vos fichiers `.nam` sur la tête (bouton en bas de page) et de tout régler :
 
-- au démarrage, un NAM est chargé avec la qualité à 0 (le plus léger) ;
-- **+ Ajouter un NAM** en ajoute un, jusqu'à 3 ;
-- **Activé / Désactivé** laisse passer le son sans traitement. Un NAM désactivé reste chargé et ne consomme presque plus de processeur ;
-- **×** retire un NAM ;
-- pour chacun : choix du fichier `.nam` dans `~/nam`, qualité A2 de 0 à 1, niveaux d'entrée et de sortie.
+- **Buffer JACK** : 64, 128, 256 ou 512, toujours avec 2 périodes. La latence correspondante est affichée. **Appliquer** relance l'audio (environ 5 secondes de silence).
+- **Calibration d'entrée** : le niveau en dBu qui donne 0 dBFS sur l'entrée de la carte son (16 dBu pour la M4). Une seule valeur pour la tête, appliquée aux deux NAM. Elle ne compte que si le modèle indique son niveau d'entrée (champ `input_level_dbu` des captures récentes).
+- **La chaîne**, fixe : entrée → **Pédale** → **Ampli** → power amp. Pour chacun des deux blocs :
+  - **Activé / Désactivé** laisse passer le son sans traitement. Un bloc désactivé reste chargé et ne consomme presque plus de processeur ;
+  - le fichier `.nam` (la pédale peut rester sans modèle : « aucune pédale ») ;
+  - l'**output mode**, comme dans le plugin NAM : **Calibrated** (par défaut pour la pédale : elle sort au même niveau que la vraie pédale, l'ampli la reçoit donc comme en vrai) ou **Normalized** (par défaut pour l'ampli : tous les modèles sortent au même volume) ;
+  - la qualité A2 de 0 à 1, les niveaux d'entrée et de sortie.
 
-Ces changements sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de `/etc/tete-nam.conf`. La page tourne en priorité basse pour ne jamais gêner l'audio. Si elle ne répond pas : `journalctl -u tete-nam-web -n 30`.
+Chaque changement est appliqué tout de suite et **sauvegardé** dans `/etc/tete-nam.conf` : la tête redémarre comme vous l'avez laissée. La page tourne en priorité basse pour ne jamais gêner l'audio. Si elle ne répond pas : `journalctl -u tete-nam-web -n 30`.
 
 ### Sans Wi-Fi (studio) : le réseau de la tête
 
@@ -136,15 +138,15 @@ Une bascule coupe le Wi-Fi quelques secondes : reconnectez le téléphone au bon
 
 ## 7. Procédure de test
 
-Changez les réglages avec `sudo nano /etc/tete-nam.conf` (Ctrl+O pour enregistrer, Ctrl+X pour sortir), puis `sudo systemctl restart tete-nam`.
+Tout se règle depuis la page web. À la main, c'est aussi possible : `sudo nano /etc/tete-nam.conf` (Ctrl+O pour enregistrer, Ctrl+X pour sortir), puis `sudo systemctl restart tete-nam`.
 
 | Étape | Réglage | Ce qu'on regarde |
 |---|---|---|
-| A | 1 modèle A2, `QUALITY=0.0`, `PERIOD=256` | Ça sonne, charge DSP, 0 xrun sur 5 minutes de jeu |
-| B | Idem avec `PERIOD=128` | Idem. La latence doit devenir imperceptible |
-| C | `NPERIODS=2` (garder 128) | Encore moins de latence, si toujours 0 xrun |
-| D | Monter `QUALITY` par pas de 0.1 (curseur de la page web) | Jusqu'où le Pi 3 tient : noter la valeur où la charge passe 85 % |
-| E | 2 modèles : remplir `MODEL2=` | Test de charge (les deux modèles sont en série) |
+| A | Ampli seul (pédale désactivée), qualité 0, buffer 256 | Ça sonne, charge DSP, 0 xrun sur 5 minutes de jeu |
+| B | Buffer 128 | Idem. La latence doit devenir imperceptible |
+| C | Buffer 64 | Encore moins de latence, si toujours 0 xrun |
+| D | Monter la qualité par pas de 0.1 | Jusqu'où le Pi 3 tient : noter la valeur où la charge passe 85 % |
+| E | Activer la pédale | Test de charge (les deux modèles sont en série) |
 
 Notez à chaque étape la charge DSP et les xruns. Repères :
 
@@ -156,7 +158,7 @@ Notez à chaque étape la charge DSP et les xruns. Repères :
 Pour essayer un autre modèle sans redémarrer (ou depuis la page web) :
 
 ```bash
-tete-nam modele 1 ~/nam/autre_modele.nam
+tete-nam modele ampli ~/nam/autre_modele.nam     # ou : tete-nam modele pedale ...
 ```
 
 ## Réglages (`/etc/tete-nam.conf`)
@@ -165,17 +167,22 @@ tete-nam modele 1 ~/nam/autre_modele.nam
 |---|---|
 | `CARD` | Nom de la carte son (`cat /proc/asound/cards` pour le vérifier) |
 | `RATE` | 48000, comme les modèles |
-| `PERIOD`, `NPERIODS` | Taille et nombre de buffers JACK |
+| `PERIOD`, `NPERIODS` | Taille (64 à 512) et nombre (2) de buffers JACK |
 | `INPUT`, `OUTPUTS` | Entrée guitare et sorties de la M4 |
-| `MODEL1`, `MODEL2` | Chemins des modèles `.nam` |
-| `IN_DB`, `OUT_DB` | Niveau avant et après le modèle, en dB |
-| `QUALITY` | Taille du modèle NAM A2 qui tourne : 0.0 = la plus légère, 1.0 = complète |
+| `INPUT_DBU` | Calibration d'entrée : dBu pour 0 dBFS (16 pour la M4) |
+| `PEDALE_MODEL`, `AMPLI_MODEL` | Chemins des modèles `.nam` (pédale : vide = aucune) |
+| `..._ACTIF` | 1 = activé, 0 = le son passe sans traitement |
+| `..._MODE` | Output mode : `calibrated` ou `normalized` |
+| `..._IN_DB`, `..._OUT_DB` | Niveau avant et après le modèle, en dB |
+| `..._QUALITY` | Taille du modèle NAM A2 qui tourne : 0.0 = la plus légère, 1.0 = complète |
+
+Une ancienne conf (`MODEL1`, `MODEL2`...) est convertie automatiquement par `install.sh` (copie gardée dans `/etc/tete-nam.conf.avant-chaine-fixe`) : `MODEL1` seul devient l'ampli, `MODEL1` + `MODEL2` deviennent la pédale puis l'ampli.
 
 ## Si ça ne marche pas
 
 - `tete-nam etat` dit *inactive* ou *activating* : regardez `journalctl -u tete-nam -n 50`. Les messages commencent par ERREUR et disent quoi faire (carte introuvable, modèle introuvable…).
 - **Carte introuvable** : `cat /proc/asound/cards`, puis mettez dans `CARD=` le nom entre crochets de la M4.
-- **Pas de son mais tout est actif** : vérifiez le bouton MONITOR de la M4, le câble vers FX RETURN et `jack_lsp -c` (les connexions doivent aller de `system:capture_1` à `effect_0`, puis vers `system:playback_1`).
+- **Pas de son mais tout est actif** : vérifiez le bouton MONITOR de la M4, le câble vers FX RETURN et `jack_lsp -c` (les connexions doivent aller de `system:capture_1` à `effect_0` (la pédale), puis `effect_1` (l'ampli), puis vers `system:playback_1`).
 - **Annuler les réglages de démarrage** : une copie de `cmdline.txt` d'origine est dans `/boot/firmware/cmdline.txt.avant-tete-nam`.
 - **Couper le démarrage automatique** : `sudo systemctl disable --now tete-nam`.
 - **Le réseau TeteNAM n'apparaît pas** : `journalctl -u tete-nam-wifi -n 30`. Vérifiez que le pays Wi-Fi est réglé (`sudo raspi-config`, *Localisation Options*, *WLAN Country*, FR).
