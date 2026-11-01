@@ -36,12 +36,12 @@ Branchez la M4 sur un port USB du Pi avant de commencer.
 
 ```bash
 sudo apt update && sudo apt install -y git
-git clone -b claude/project-thread-wu9p0j https://github.com/nosaga0717/neural-amp-modeler-lv2.git
+git clone https://github.com/NoSaga0717/neural-amp-modeler-lv2.git
 cd neural-amp-modeler-lv2
 sudo ./tete-nam/install.sh
 ```
 
-Si vous aviez déjà lancé l'installation avant l'arrivée de la page web, mettez à jour avec `cd neural-amp-modeler-lv2 && git pull && sudo ./tete-nam/install.sh` (quelques minutes seulement, la compilation est déjà faite).
+Pour mettre à jour une installation existante : `cd neural-amp-modeler-lv2 && git pull && sudo ./tete-nam/install.sh`. Si `git pull` se plaint d'une branche introuvable (première installation faite depuis l'ancienne branche de travail), tapez d'abord `git fetch origin && git checkout main`.
 
 Le script installe JACK, le plugin NAM et mod-host, règle le temps réel et le démarrage automatique. **Comptez 10 à 20 minutes sur un Pi 3**, surtout pour télécharger et installer les paquets.
 
