@@ -1,0 +1,15 @@
+[Unit]
+Description=Tete NAM - Wi-Fi de secours (hotspot si aucun Wi-Fi connu)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/tete-nam/wifi-secours.sh auto
+# Priorité basse : ne jamais gêner l'audio
+Nice=15
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

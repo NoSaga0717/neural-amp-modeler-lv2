@@ -58,8 +58,14 @@ fi
 
 etape "5/7 Fichiers de la Tête NAM"
 install -d /opt/tete-nam
-install -m 755 "$ICI/run.sh" "$ICI/cpu-performance.sh" "$ICI/tetenam.py" "$ICI/web.py" /opt/tete-nam/
+install -m 755 "$ICI/run.sh" "$ICI/cpu-performance.sh" "$ICI/tetenam.py" "$ICI/web.py" \
+    "$ICI/wifi-secours.sh" /opt/tete-nam/
 ln -sf /opt/tete-nam/tetenam.py /usr/local/bin/tete-nam
+ln -sf /opt/tete-nam/wifi-secours.sh /usr/local/bin/tete-nam-wifi
+if [ ! -e /etc/tete-nam-wifi.conf ]; then
+    install -m 644 "$ICI/tete-nam-wifi.conf" /etc/tete-nam-wifi.conf
+    echo "Réglages Wi-Fi de secours créés : /etc/tete-nam-wifi.conf"
+fi
 if [ ! -e /etc/tete-nam.conf ]; then
     sed "s#__HOME__#$MAISON#" "$ICI/tete-nam.conf" > /etc/tete-nam.conf
     echo "Réglages créés : /etc/tete-nam.conf"
@@ -87,8 +93,9 @@ etape "7/7 Démarrage automatique"
 for svc in tete-nam tete-nam-web; do
     sed "s/__USER__/$UTIL/" "$ICI/$svc.service" > "/etc/systemd/system/$svc.service"
 done
+install -m 644 "$ICI/tete-nam-wifi.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable tete-nam.service tete-nam-web.service
+systemctl enable tete-nam.service tete-nam-web.service tete-nam-wifi.service
 systemctl restart tete-nam-web.service || true
 
 echo
@@ -98,3 +105,5 @@ echo "   dans /etc/tete-nam.conf avec : sudo nano /etc/tete-nam.conf)"
 echo "2. Redémarrez :  sudo reboot"
 echo "3. Vérifiez   :  tete-nam etat"
 echo "   ou dans un navigateur : http://$(hostname).local:8080"
+echo "Sans Wi-Fi connu, la tête crée son propre réseau : voir /etc/tete-nam-wifi.conf"
+echo "(nom et mot de passe à changer) et tete-nam-wifi etat"
