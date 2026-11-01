@@ -1,0 +1,20 @@
+[Unit]
+Description=Tete NAM (JACK + mod-host + modele NAM)
+After=sound.target local-fs.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=audio
+# Le "+" lance cette ligne en root : processeur en mode performance
+ExecStartPre=+/opt/tete-nam/cpu-performance.sh
+ExecStart=/opt/tete-nam/run.sh
+Restart=always
+RestartSec=3
+LimitRTPRIO=95
+LimitMEMLOCK=infinity
+Nice=-10
+
+[Install]
+WantedBy=multi-user.target
