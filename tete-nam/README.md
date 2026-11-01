@@ -47,6 +47,10 @@ Le script installe JACK, compile le plugin NAM et mod-host, règle le temps rée
 
 ## 4. Copier le modèle
 
+Le plus simple, une fois la tête démarrée : ouvrez **http://tetenam.local:8080** et utilisez le bouton **Envoyer des fichiers .nam vers la tête** en bas de la page. Vous pouvez en envoyer plusieurs d'un coup, depuis un ordinateur ou un téléphone. Les espaces dans les noms sont remplacés par des `_`.
+
+Sinon, en ligne de commande :
+
 Depuis votre ordinateur (pas depuis le Pi), dans le dossier où se trouve votre fichier `.nam` :
 
 ```bash
@@ -87,7 +91,7 @@ watch -n 1 tete-nam etat
 
 Sur un téléphone ou un ordinateur connecté au même Wi-Fi, ouvrez **http://tetenam.local:8080**. La page affiche en direct la charge DSP (avec un graphe des 2 dernières minutes), les xruns, la température et le throttling.
 
-Elle gère aussi la chaîne de NAM, branchés en série (entrée → NAM 1 → NAM 2 → NAM 3 → ampli) :
+Elle permet d'envoyer vos fichiers `.nam` sur la tête (bouton en bas de page). Elle gère aussi la chaîne de NAM, branchés en série (entrée → NAM 1 → NAM 2 → NAM 3 → ampli) :
 
 - au démarrage, un NAM est chargé avec la qualité à 0 (le plus léger) ;
 - **+ Ajouter un NAM** en ajoute un, jusqu'à 3 ;

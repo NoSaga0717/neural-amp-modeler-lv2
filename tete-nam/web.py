@@ -10,6 +10,8 @@ redémarrage, on repart de /etc/tete-nam.conf.
 """
 import glob
 import json
+import re
+import urllib.parse
 import os
 import subprocess
 import sys
@@ -251,6 +253,30 @@ def api_retirer(d):
         return {"ok": ok(rep), "reponse": rep}
 
 
+TAILLE_MAX = 50 * 1024 * 1024   # 50 Mo, largement plus qu'un .nam
+
+
+def api_envoyer(nom, contenu):
+    """Reçoit un fichier .nam envoyé depuis la page et le range dans ~/nam."""
+    nom = os.path.basename(nom).strip().replace(" ", "_")
+    nom = re.sub(r"[^\w.\-]", "_", nom)              # pas de caractères bizarres
+    if not nom.lower().endswith(".nam") or nom.startswith("."):
+        return {"ok": False, "erreur": f"{nom} : seuls les fichiers .nam sont acceptés"}
+    try:
+        donnees = json.loads(contenu)
+        assert isinstance(donnees, dict) and "architecture" in donnees
+    except Exception:
+        return {"ok": False, "erreur": f"{nom} : ce n'est pas un modèle NAM valide"}
+    os.makedirs(DOSSIER_MODELES, exist_ok=True)
+    final = os.path.join(DOSSIER_MODELES, nom)
+    temp = final + ".envoi"
+    with open(temp, "wb") as f:                       # écrit à côté, puis renomme :
+        f.write(contenu)                              # jamais de fichier à moitié écrit
+    existait = os.path.exists(final)
+    os.replace(temp, final)
+    return {"ok": True, "nom": nom, "remplace": existait}
+
+
 ROUTES = {"/api/modele": api_modele, "/api/niveau": api_niveau, "/api/actif": api_actif,
           "/api/ajouter": api_ajouter, "/api/retirer": api_retirer}
 
@@ -277,6 +303,17 @@ class Gestionnaire(BaseHTTPRequestHandler):
             self.envoyer(404, "introuvable", "text/plain")
 
     def do_POST(self):
+        if self.path == "/api/envoyer":
+            n = int(self.headers.get("Content-Length", 0))
+            if n > TAILLE_MAX:
+                r = {"ok": False, "erreur": "Fichier trop gros (50 Mo maximum)"}
+            else:
+                nom = urllib.parse.unquote(self.headers.get("X-Nom-Fichier", ""))
+                try:
+                    r = api_envoyer(nom, self.rfile.read(n))
+                except Exception as e:
+                    r = {"ok": False, "erreur": str(e)}
+            return self.envoyer(200, json.dumps(r), "application/json")
         if self.path not in ROUTES:
             return self.envoyer(404, "introuvable", "text/plain")
         n = int(self.headers.get("Content-Length", 0))
@@ -310,7 +347,8 @@ section.off{opacity:.45;border-left-color:#555}
 button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;color:var(--texte);background:#333}
 button.on{background:var(--ok);color:#000;font-weight:600}
 button.retirer{background:none;color:var(--doux);font-size:20px;padding:4px 10px}
-#ajouter{width:100%;margin-top:10px;padding:12px;font-size:17px;background:#2a2a2a;border:1px dashed #555}
+#ajouter,#envoyer{width:100%;margin-top:10px;padding:12px;font-size:17px;background:#2a2a2a;border:1px dashed #555}
+#infoEnvoi{font-size:13px;color:var(--doux);margin-top:6px;white-space:pre-line}
 #ajouter:disabled{opacity:.4;cursor:default}
 select,input[type=range]{width:100%;accent-color:var(--accent)}
 select{background:#2a2a2a;color:var(--texte);border:1px solid #444;border-radius:6px;padding:8px;font-size:15px}
@@ -330,8 +368,12 @@ label{display:flex;justify-content:space-between;color:var(--doux);font-size:13p
 <h2>Chaîne (entrée → NAM 1 → … → ampli)</h2>
 <div id="chaine"></div>
 <button id="ajouter">+ Ajouter un NAM</button>
+<h2>Fichiers</h2>
+<button id="envoyer">Envoyer des fichiers .nam vers la tête</button>
+<input type="file" id="fichiers" accept=".nam" multiple hidden>
+<div id="infoEnvoi"></div>
 <div id="msg"></div>
-<div class="pied">Les changements sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de /etc/tete-nam.conf.</div>
+<div class="pied">Les réglages de la chaîne sont immédiats mais pas sauvegardés : au redémarrage, la tête repart de /etc/tete-nam.conf. Les fichiers envoyés, eux, restent dans ~/nam.</div>
 <script>
 const $=id=>document.getElementById(id);
 let construit="", occupe=false;
@@ -376,6 +418,20 @@ function chaine(e){
   });
 }
 $("ajouter").onclick=()=>post("/api/ajouter");
+$("envoyer").onclick=()=>$("fichiers").click();
+$("fichiers").onchange=async()=>{
+  const liste=[...$("fichiers").files], lignes=[];
+  for(const [n,f] of liste.entries()){
+    $("infoEnvoi").textContent=[...lignes,`Envoi ${n+1}/${liste.length} : ${f.name}…`].join("\n");
+    try{
+      const r=await (await fetch("/api/envoyer",{method:"POST",body:f,
+        headers:{"X-Nom-Fichier":encodeURIComponent(f.name)}})).json();
+      lignes.push(r.ok?`✓ ${r.nom}${r.remplace?" (remplacé)":""}`:`✗ ${r.erreur}`);
+    }catch(e){lignes.push(`✗ ${f.name} : pas de réponse de la tête`);}
+  }
+  $("infoEnvoi").textContent=lignes.join("\n");
+  $("fichiers").value="";construit="";maj();
+};
 function graphe(h){
   const c=$("graphe"),x=c.getContext("2d"),w=c.width=c.clientWidth*devicePixelRatio,ht=c.height=70*devicePixelRatio;
   x.clearRect(0,0,w,ht);
