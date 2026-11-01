@@ -26,7 +26,8 @@ echo "jackd2 jackd/tweak_rt_limits boolean true" | debconf-set-selections
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git build-essential cmake pkg-config python3 \
-    jackd2 libjack-jackd2-dev liblilv-dev lilv-utils libreadline-dev libfftw3-dev
+    jackd2 libjack-jackd2-dev liblilv-dev lilv-utils libreadline-dev libfftw3-dev \
+    bluez python3-dbus python3-gi rfkill
 
 etape "2/7 Plugin NAM : version précompilée ou compilation"
 sudo -u "$UTIL" git -C "$DEPOT" submodule update --init --recursive
@@ -71,7 +72,7 @@ fi
 etape "5/7 Fichiers de la Tête NAM"
 install -d /opt/tete-nam
 install -m 755 "$ICI/run.sh" "$ICI/cpu-performance.sh" "$ICI/tetenam.py" "$ICI/web.py" \
-    "$ICI/wifi-secours.sh" /opt/tete-nam/
+    "$ICI/wifi-secours.sh" "$ICI/ble.py" /opt/tete-nam/
 ln -sf /opt/tete-nam/tetenam.py /usr/local/bin/tete-nam
 ln -sf /opt/tete-nam/wifi-secours.sh /usr/local/bin/tete-nam-wifi
 if [ ! -e /etc/tete-nam-wifi.conf ]; then
@@ -120,10 +121,20 @@ etape "7/7 Démarrage automatique"
 for svc in tete-nam tete-nam-web; do
     sed "s/__USER__/$UTIL/" "$ICI/$svc.service" > "/etc/systemd/system/$svc.service"
 done
-install -m 644 "$ICI/tete-nam-wifi.service" /etc/systemd/system/
+install -m 644 "$ICI/tete-nam-wifi.service" "$ICI/tete-nam-ble.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable tete-nam.service tete-nam-web.service tete-nam-wifi.service
+systemctl enable tete-nam.service tete-nam-web.service tete-nam-wifi.service tete-nam-ble.service
+# Bluetooth pour l'appli Android (le Wi-Fi reste disponible)
+rfkill unblock bluetooth 2>/dev/null || true
+systemctl enable --now bluetooth.service 2>/dev/null || true
+for c in /boot/firmware/config.txt /boot/config.txt; do
+    if [ -e "$c" ] && grep -q '^dtoverlay=disable-bt' "$c"; then
+        echo "ATTENTION : $c contient dtoverlay=disable-bt, le Bluetooth est coupé."
+        echo "Mettez un # devant cette ligne puis redémarrez pour utiliser l'appli."
+    fi
+done
 systemctl restart tete-nam-web.service || true
+systemctl restart tete-nam-ble.service || true
 # Si la tête tournait déjà, on recharge l'audio avec le nouveau plugin
 if systemctl is-active -q tete-nam.service; then systemctl restart tete-nam.service; fi
 
@@ -136,3 +147,5 @@ echo "3. Vérifiez   :  tete-nam etat"
 echo "   ou dans un navigateur : http://$(hostname).local:8080"
 echo "Sans Wi-Fi connu, la tête crée son propre réseau : voir /etc/tete-nam-wifi.conf"
 echo "(nom et mot de passe à changer) et tete-nam-wifi etat"
+echo "Appli Android : la tête est visible en Bluetooth sous le nom TeteNAM"
+echo "(journal : journalctl -u tete-nam-ble -f)"
