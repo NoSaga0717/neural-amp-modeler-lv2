@@ -109,4 +109,26 @@ A large collection of models is available at https://www.tone3000.com
 		lv2:default 1.0;
 		lv2:minimum 0.0;
 		lv2:maximum 1.0;
+	], [
+		a lv2:ControlPort, lv2:InputPort;
+		lv2:index 7;
+		lv2:symbol "input_calibration";
+		lv2:name "Input Calibration";
+		rdfs:comment "Audio interface level in dBu that gives 0 dBFS";
+		lv2:default 12.0;
+		lv2:minimum -60.0;
+		lv2:maximum 60.0;
+		units:unit units:db;
+	], [
+		a lv2:ControlPort, lv2:InputPort;
+		lv2:index 8;
+		lv2:symbol "output_mode";
+		lv2:name "Output Mode";
+		lv2:portProperty lv2:integer, lv2:enumeration;
+		lv2:default 1;
+		lv2:minimum 0;
+		lv2:maximum 2;
+		lv2:scalePoint [ rdfs:label "Raw"; rdf:value 0 ];
+		lv2:scalePoint [ rdfs:label "Normalized"; rdf:value 1 ];
+		lv2:scalePoint [ rdfs:label "Calibrated"; rdf:value 2 ];
 	].

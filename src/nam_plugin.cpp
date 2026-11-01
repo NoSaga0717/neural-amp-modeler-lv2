@@ -5,6 +5,24 @@
 
 #include "nam_plugin.h"
 
+// Reads a numeric metadata field ("input_level_dbu", ...). NAN if missing.
+static float ReadModelLevel(NeuralAudio::NeuralModel* model, const char* field)
+{
+	std::string value = model->GetMetadata(field);
+
+	if (value.empty())
+		return NAN;
+
+	try
+	{
+		return std::stof(value);
+	}
+	catch (const std::exception&)
+	{
+		return NAN;
+	}
+}
+
 #define SMOOTH_EPSILON .0001f
 
 #ifndef BYPASS_DB_THRESHOLD
@@ -136,6 +154,8 @@ namespace NAM {
 					if (model != nullptr)
 					{
 						response.model = model;
+						response.levels.inputDBu = ReadModelLevel(model, "input_level_dbu");
+						response.levels.outputDBu = ReadModelLevel(model, "output_level_dbu");
 
 						memcpy(response.path, msg->path, pathlen);
 					}
@@ -187,6 +207,7 @@ namespace NAM {
 		// swap current model with new one
 		nam->currentModel = msg->model;
 		nam->currentModelPath = msg->path;
+		nam->currentLevels = msg->levels;
 		assert(nam->currentModelPath.capacity() >= MAX_FILE_NAME + 1);
 
 		if (nam->currentModel != nullptr)
@@ -271,7 +292,10 @@ namespace NAM {
 				currentModel->SetQualityScaleFactor(*(ports.quality_scale));
 			}
 
-			modelInputAdjustmentDB = currentModel->GetRecommendedInputDBAdjustment();
+			// Input calibration: match the interface level (dBu at 0 dBFS) to the
+			// level the model was captured at. Only when the model says it.
+			if (!std::isnan(currentLevels.inputDBu))
+				modelInputAdjustmentDB = *(ports.input_calibration) - currentLevels.inputDBu;
 
 #ifdef SMART_BYPASS_ENABLED
 			int receptiveFieldSamples = currentModel->GetReceptiveFieldSize();
@@ -344,7 +368,22 @@ namespace NAM {
 		{
 			currentModel->Process(ports.audio_out, ports.audio_out, n_samples);
 
-			modelLoudnessAdjustmentDB = currentModel->GetRecommendedOutputDBAdjustment();
+			switch ((int)lrintf(*(ports.output_mode)))
+			{
+				case kOutputModeRaw:
+					break;
+
+				case kOutputModeCalibrated:
+					// Output at the same dBu as the real gear, for the same interface
+					if (!std::isnan(currentLevels.outputDBu))
+						modelLoudnessAdjustmentDB = currentLevels.outputDBu - *(ports.input_calibration);
+					break;
+
+				case kOutputModeNormalized:
+				default:
+					modelLoudnessAdjustmentDB = currentModel->GetRecommendedOutputDBAdjustment();
+					break;
+			}
 		}
 
 		// Convert output level from db

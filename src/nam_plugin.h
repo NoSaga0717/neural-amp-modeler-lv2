@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <random>
@@ -40,10 +41,23 @@ namespace NAM {
 		char path[MAX_FILE_NAME];
 	};
 
+	// Calibration levels read from the model metadata (NAN when missing)
+	struct ModelLevels {
+		float inputDBu = NAN;
+		float outputDBu = NAN;
+	};
+
+	enum OutputMode {
+		kOutputModeRaw = 0,
+		kOutputModeNormalized = 1,
+		kOutputModeCalibrated = 2
+	};
+
 	struct LV2SwitchModelMsg {
 		LV2WorkType type;
 		char path[MAX_FILE_NAME];
 		NeuralAudio::NeuralModel* model;
+		ModelLevels levels;
 	};
 
 	struct LV2FreeModelMsg {
@@ -61,6 +75,8 @@ namespace NAM {
 			float* input_level;
 			float* output_level;
 			float* quality_scale;
+			float* input_calibration;
+			float* output_mode;
 		};
 
 		Ports ports = {};
@@ -74,6 +90,7 @@ namespace NAM {
 		NeuralAudio::NeuralModelLoader loader;
 		NeuralAudio::NeuralModel* currentModel = nullptr;
 		std::string currentModelPath;
+		ModelLevels currentLevels;
 		float prevDCInput = 0;
 		float prevDCOutput = 0;
 
