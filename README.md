@@ -1,3 +1,5 @@
+> **Tête NAM** : le dossier `tete-nam/` de ce fork (version Pi 3) n'est plus utilisé. Le logiciel de la tête est maintenant dans [`NoSaga0717/stompbox`](https://github.com/NoSaga0717/stompbox), dossier `tete-nam/`.
+
 # neural-amp-modeler-lv2
 
 LV2 plugin for neural network machine learning amp model playback using the [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio) engine.
