@@ -1,5 +1,7 @@
 # Tête NAM : premier test sur Raspberry Pi 3
 
+> **Plus utilisé (3 novembre 2026)** : la Tête NAM est passée sur Raspberry Pi 5 avec le moteur stompbox. Le logiciel est maintenant dans [`NoSaga0717/stompbox`](https://github.com/NoSaga0717/stompbox), dossier `tete-nam/`. Ce dossier reste pour l'historique de la version Pi 3 (mod-host + plugin NAM LV2).
+
 Montage : guitare → MOTU M4 (entrée 1, instrument) → Pi 3 (USB) → M4 sortie 1 → FX RETURN de la Spider Valve → 4x12.
 
 Logiciel : Raspberry Pi OS Lite 64 bits, JACK (serveur audio temps réel), mod-host (hôte de plugins piloté par le réseau, le même que les pédaliers MOD), et le plugin `neural-amp-modeler-lv2` de ce dépôt. Tout démarre tout seul à l'allumage.
